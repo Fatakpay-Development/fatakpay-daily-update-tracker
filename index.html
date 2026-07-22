@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dayline — FatakPay Daily Updates</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Sora:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+
+  <div id="syncBanner" class="sync-banner" hidden role="status"></div>
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <div>
+        <p class="brand-name">Dayline</p>
+        <p class="brand-tag">FatakPay team daily updates</p>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <label class="date-picker">
+        <span>View date</span>
+        <input type="date" id="viewDate" />
+      </label>
+      <button type="button" id="adminToggleBtn" class="btn-ghost">Admin</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="compose" aria-labelledby="compose-title">
+      <h1 id="compose-title">Log today’s work</h1>
+      <p class="lede">Select department and name, write your tasks (one per line), and submit. Updates land under your department — same layout as the WhatsApp group.</p>
+
+      <form id="updateForm" class="compose-form" novalidate>
+        <div class="field">
+          <label for="department">Department</label>
+          <select id="department" name="department" required>
+            <option value="">Select department</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="member">Your name</label>
+          <select id="member" name="member" required disabled>
+            <option value="">Select name</option>
+          </select>
+          <p class="field-note" id="memberNote" hidden>
+            No names in this department yet. Ask an admin to add names.
+          </p>
+        </div>
+
+        <div class="field field-wide">
+          <label for="task">Tasks for today</label>
+          <textarea
+            id="task"
+            name="task"
+            rows="6"
+            maxlength="4000"
+            placeholder="One task per line, e.g.&#10;Remove FatakCoins from Membership for Smart Plan. Sign-off done.&#10;Product 336 Digital PL — Pilot Fixes &amp; E2E QA. Raised on Jira.&#10;Leave"
+            required
+          ></textarea>
+          <p class="hint"><span id="charCount">0</span>/4000 · one task per line</p>
+        </div>
+
+        <div class="actions">
+          <button type="submit" class="btn-primary">Submit update</button>
+          <p id="formStatus" class="form-status" role="status" aria-live="polite"></p>
+        </div>
+      </form>
+    </section>
+
+    <section class="board" aria-labelledby="board-title">
+      <div class="board-head">
+        <div>
+          <h2 id="board-title">Department boards</h2>
+          <p id="boardMeta" class="board-meta"></p>
+        </div>
+        <div class="board-actions">
+          <button type="button" id="copyWhatsAppBtn" class="btn-ghost">Copy for WhatsApp</button>
+        </div>
+      </div>
+      <div id="departmentBoards" class="department-grid"></div>
+    </section>
+  </main>
+
+  <section id="adminPanel" class="admin-panel" hidden>
+    <div class="admin-panel-inner">
+      <div class="admin-panel-head">
+        <div>
+          <h2>Admin — manage team</h2>
+          <p class="board-meta">Add or remove departments and names. Regular users can only submit updates.</p>
+        </div>
+        <button type="button" id="adminLogoutBtn" class="btn-ghost">Log out</button>
+      </div>
+
+      <div class="admin-grid">
+        <form id="addDeptForm" class="admin-card">
+          <h3>Add department</h3>
+          <div class="field">
+            <label for="newDeptName">Department name</label>
+            <input type="text" id="newDeptName" maxlength="40" placeholder="e.g. Marketing" required />
+          </div>
+          <button type="submit" class="btn-primary">Add department</button>
+          <p id="adminDeptStatus" class="form-status" role="status"></p>
+        </form>
+
+        <form id="addMemberForm" class="admin-card">
+          <h3>Add name</h3>
+          <div class="field">
+            <label for="adminDeptSelect">Department</label>
+            <select id="adminDeptSelect" required>
+              <option value="">Select department</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="newMemberName">Name</label>
+            <input type="text" id="newMemberName" maxlength="60" placeholder="Team member name" required />
+          </div>
+          <button type="submit" class="btn-primary">Add name</button>
+          <p id="adminMemberStatus" class="form-status" role="status"></p>
+        </form>
+      </div>
+
+      <div id="adminRoster" class="admin-roster"></div>
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p>Shared across the team when Firebase is connected. Export JSON for backup anytime.</p>
+    <div class="footer-actions">
+      <button type="button" id="exportBtn" class="btn-ghost">Export JSON</button>
+      <button type="button" id="clearDayBtn" class="btn-ghost danger">Clear selected day</button>
+    </div>
+  </footer>
+
+  <dialog id="adminLoginDialog" class="admin-dialog">
+    <form id="adminLoginForm" method="dialog" class="admin-login">
+      <h2>Admin login</h2>
+      <p>Enter the admin password to manage departments and names.</p>
+      <div class="field">
+        <label for="adminPassword">Password</label>
+        <input type="password" id="adminPassword" autocomplete="current-password" required />
+      </div>
+      <p id="adminLoginError" class="form-status error" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" id="adminLoginCancel" class="btn-ghost">Cancel</button>
+        <button type="submit" class="btn-primary">Unlock admin</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
