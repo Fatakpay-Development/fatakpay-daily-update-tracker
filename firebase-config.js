@@ -5,7 +5,7 @@
 window.DAYLINE_FIREBASE = {
   apiKey: "AIzaSyAmono0VPGuJ97rqmKHbtDxnqIjg30sQn8",
   authDomain: "daily-update-tracker-90115.firebaseapp.com",
-  databaseURL: "https://daily-update-tracker-90115-default-rtdb.firebaseio.com",
+  databaseURL: "https://daily-update-tracker-90115-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "daily-update-tracker-90115",
   storageBucket: "daily-update-tracker-90115.firebasestorage.app",
   messagingSenderId: "71482427337",
