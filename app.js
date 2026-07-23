@@ -1,6 +1,6 @@
 (function () {
   const ADMIN_SESSION_KEY = "dayline_admin_session";
-  const CLAIM_KEY = "dayline_identity_claim_v1";
+  const CLAIM_KEY = "dayline_identity_claim_v2";
   const DEFAULT_ACCENTS = ["#2b5aa0", "#0d7a6f", "#c45c26", "#6b4c9a", "#8a5a2b", "#b45309", "#0f766e", "#7c3aed"];
   const TZ = "Asia/Kolkata";
 
@@ -16,10 +16,13 @@
   let updatesRef = null;
   let teamRef = null;
   let settingsRef = null;
+  let claimsDayRef = null;
   let updatesCache = [];
+  let claimsCache = {}; // { [deptId]: { [safeMember]: { token, memberName, ... } } }
   let team = cloneDefaults();
   let settings = { cutoffEnabled: false, cutoffTime: "19:00" };
   let isAdmin = sessionStorage.getItem(ADMIN_SESSION_KEY) === "1";
+  let submitInFlight = false;
 
   const els = {
     department: document.getElementById("department"),
@@ -142,25 +145,156 @@
   function getClaim() {
     try {
       const raw = localStorage.getItem(CLAIM_KEY);
+      if (!raw) return getLegacyClaimMigrated();
+      const claim = JSON.parse(raw);
+      if (!claim || claim.date !== todayISO()) return getLegacyClaimMigrated();
+      if (!claim.departmentId || !claim.memberName || !claim.token) return getLegacyClaimMigrated();
+      return claim;
+    } catch {
+      return getLegacyClaimMigrated();
+    }
+  }
+
+  /** Older local-only lock (no token) — used to re-claim ownership after upgrade. */
+  function getLegacyClaimMigrated() {
+    try {
+      const raw = localStorage.getItem("dayline_identity_claim_v1");
       if (!raw) return null;
       const claim = JSON.parse(raw);
       if (!claim || claim.date !== todayISO()) return null;
       if (!claim.departmentId || !claim.memberName) return null;
-      return claim;
+      return { ...claim, token: null, legacy: true };
     } catch {
       return null;
     }
   }
 
-  function setClaim(departmentId, memberName) {
+  function setClaim(departmentId, memberName, token) {
     localStorage.setItem(
       CLAIM_KEY,
       JSON.stringify({
         date: todayISO(),
         departmentId,
         memberName,
+        token,
       })
     );
+    localStorage.removeItem("dayline_identity_claim_v1");
+  }
+
+  function safeFirebaseKey(value) {
+    return String(value).replace(/[.#$\[\]\/]/g, "_");
+  }
+
+  function claimRefFor(date, departmentId, memberName) {
+    return db.ref(
+      `dayline/claims/${date}/${safeFirebaseKey(departmentId)}/${safeFirebaseKey(memberName)}`
+    );
+  }
+
+  function findRemoteClaim(departmentId, memberName) {
+    const dept = claimsCache[safeFirebaseKey(departmentId)];
+    if (!dept) return null;
+    return dept[safeFirebaseKey(memberName)] || null;
+  }
+
+  function isNameTakenBySomeoneElse(departmentId, memberName) {
+    if (isAdmin) return false;
+    const remote = findRemoteClaim(departmentId, memberName);
+    const local = getClaim();
+    const hasUpdate = getSelfTasks(departmentId, memberName).length > 0;
+
+    if (remote) {
+      return !(local && local.token && local.token === remote.token && local.memberName === memberName);
+    }
+    // Update exists but no cloud claim yet — only the original browser (legacy/local claim) may edit
+    if (hasUpdate) {
+      return !(
+        local &&
+        local.memberName === memberName &&
+        local.departmentId === departmentId
+      );
+    }
+    return false;
+  }
+
+  /**
+   * Shared lock: first successful submitter owns that name for the day (token in Firebase + localStorage).
+   * Other browsers get a validation error and must NOT write.
+   */
+  async function assertCanWritePerson(departmentId, memberName) {
+    if (isAdmin) return { ok: true };
+
+    const local = getClaim();
+    if (local && (local.memberName !== memberName || local.departmentId !== departmentId)) {
+      return {
+        ok: false,
+        message: `You've already submitted as ${local.memberName} today. You can only update your own entry — not someone else's. Nothing was saved.`,
+      };
+    }
+
+    if (!db || !cloudEnabled) {
+      return { ok: false, message: "Shared sync is not available." };
+    }
+
+    const date = todayISO();
+    const ref = claimRefFor(date, departmentId, memberName);
+    const snap = await ref.once("value");
+    const remote = snap.val();
+    const hasExistingUpdate = getSelfTasks(departmentId, memberName).length > 0;
+
+    async function createClaimToken() {
+      const token =
+        (crypto.randomUUID && crypto.randomUUID()) ||
+        `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      const tx = await ref.transaction((current) => {
+        if (current != null) return;
+        return {
+          token,
+          memberName,
+          departmentId,
+          claimedAt: new Date().toISOString(),
+        };
+      });
+
+      if (!tx.committed) {
+        return {
+          ok: false,
+          message: `${memberName} already submitted today. You can't add tasks for them. Nothing was saved.`,
+        };
+      }
+
+      setClaim(departmentId, memberName, token);
+      return { ok: true, token };
+    }
+
+    if (!remote) {
+      // Existing update with no cloud claim: only original browser (local/legacy claim) may take ownership
+      if (hasExistingUpdate) {
+        if (
+          local &&
+          local.memberName === memberName &&
+          local.departmentId === departmentId
+        ) {
+          return createClaimToken();
+        }
+        return {
+          ok: false,
+          message: `${memberName} already has today's update. Only they or an admin can change it. Nothing was saved.`,
+        };
+      }
+      return createClaimToken();
+    }
+
+    if (local && local.token && local.token === remote.token && local.memberName === memberName) {
+      return { ok: true, token: local.token };
+    }
+
+    return {
+      ok: false,
+      message: `${memberName} already submitted today's update. Only they or an admin can edit it — your changes were not saved.`,
+    };
   }
 
   function setSyncBanner(message, tone) {
@@ -193,6 +327,7 @@
       updatesRef = db.ref("dayline/updates");
       teamRef = db.ref("dayline/team");
       settingsRef = db.ref("dayline/settings");
+      claimsDayRef = db.ref(`dayline/claims/${todayISO()}`);
 
       updatesRef.on("value", (snap) => {
         const val = snap.val() || {};
@@ -209,6 +344,11 @@
           };
         });
         renderBoards();
+        applyIdentityLock();
+      });
+
+      claimsDayRef.on("value", (snap) => {
+        claimsCache = snap.val() || {};
         applyIdentityLock();
       });
 
@@ -350,7 +490,9 @@
       dept.members.forEach((name) => {
         const opt = document.createElement("option");
         opt.value = name;
-        opt.textContent = name;
+        const taken = isNameTakenBySomeoneElse(deptId, name);
+        opt.textContent = taken ? `${name} (already submitted)` : name;
+        if (taken) opt.disabled = true;
         els.member.appendChild(opt);
       });
       els.member.disabled = false;
@@ -728,15 +870,28 @@
 
   els.member.addEventListener("change", () => {
     const claim = getClaim();
-    if (!isAdmin && claim && els.member.value && els.member.value !== claim.memberName) {
+    const deptId = els.department.value;
+    const name = els.member.value;
+
+    if (!isAdmin && claim && name && name !== claim.memberName) {
       els.member.value = claim.memberName;
       setFormStatus(
         `You've already submitted as ${claim.memberName} today. You can only update your own entry — not someone else's.`,
         true
       );
-    } else {
-      setFormStatus("");
+      return;
     }
+
+    if (!isAdmin && name && deptId && isNameTakenBySomeoneElse(deptId, name)) {
+      els.member.value = "";
+      setFormStatus(
+        `${name} already submitted today. You can't add or edit tasks for them.`,
+        true
+      );
+      return;
+    }
+
+    setFormStatus("");
   });
 
   els.task.addEventListener("input", () => {
@@ -747,6 +902,7 @@
 
   els.form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (submitInFlight) return;
     if (!requireCloudForShare()) return;
 
     if (!isAdmin && isPastCutoff()) {
@@ -761,7 +917,6 @@
     const memberName = els.member.value.trim();
     const tasks = parseTasks(els.task.value);
     const dept = findDept(departmentId);
-    const claim = getClaim();
 
     if (!departmentId || !dept) {
       setFormStatus("Please select a department.", true);
@@ -775,53 +930,47 @@
       setFormStatus("Selected name is not in this department. Ask an admin to add it.", true);
       return;
     }
-
-    if (
-      !isAdmin &&
-      claim &&
-      (claim.memberName !== memberName || claim.departmentId !== departmentId)
-    ) {
-      setFormStatus(
-        `You've already submitted as ${claim.memberName} today. You can only update your own entry — not someone else's.`,
-        true
-      );
-      applyIdentityLock();
-      return;
-    }
-
     if (tasks.length === 0) {
       setFormStatus("Please write at least one task (one per line).", true);
       return;
     }
 
-    const entry = {
-      id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
-      departmentId,
-      departmentName: dept.name,
-      memberName,
-      tasks,
-      date: todayISO(),
-      createdAt: new Date().toISOString(),
-    };
+    submitInFlight = true;
+    if (els.submitBtn) els.submitBtn.disabled = true;
 
     try {
+      // Shared lock check FIRST — never write if another person owns this name today
+      const access = await assertCanWritePerson(departmentId, memberName);
+      if (!access.ok) {
+        setFormStatus(access.message, true);
+        applyIdentityLock();
+        return;
+      }
+
+      const entry = {
+        id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),
+        departmentId,
+        departmentName: dept.name,
+        memberName,
+        tasks,
+        date: todayISO(),
+        createdAt: new Date().toISOString(),
+      };
+
       await upsertPersonDay(entry);
-      if (!isAdmin) setClaim(departmentId, memberName);
 
       els.viewDate.value = todayISO();
-      setFormStatus(
-        claim || getSelfTasks(departmentId, memberName).length
-          ? `Your update was saved under ${dept.name} → ${memberName}.`
-          : `Submitted under ${dept.name} → ${memberName}.`
-      );
+      setFormStatus(`Saved under ${dept.name} → ${memberName}.`);
       applyIdentityLock();
-      // After lock, show saved tasks in the form for further edits
       els.task.value = tasks.join("\n");
       els.charCount.textContent = String(els.task.value.length);
       renderBoards();
     } catch (err) {
       console.error(err);
       setFormStatus("Could not save update to the shared board. Try again.", true);
+    } finally {
+      submitInFlight = false;
+      applyIdentityLock();
     }
   });
 
@@ -866,8 +1015,10 @@
     try {
       const remaining = loadUpdates().filter((u) => u.date !== date);
       await persistUpdates(remaining);
+      if (db) await db.ref(`dayline/claims/${date}`).remove();
       setFormStatus(`Cleared updates for ${date}.`);
       renderBoards();
+      applyIdentityLock();
     } catch (err) {
       console.error(err);
       setFormStatus("Could not clear updates.", true);
