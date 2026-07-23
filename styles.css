@@ -180,6 +180,51 @@ body {
   font-size: 0.95rem;
 }
 
+.cutoff-info {
+  margin: -0.75rem 0 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--accent-deep);
+}
+
+.cutoff-info.closed {
+  color: var(--danger);
+}
+
+.identity-lock-note {
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 12px;
+  border: 1px solid rgba(13, 122, 111, 0.25);
+  background: rgba(13, 122, 111, 0.08);
+  color: var(--accent-deep);
+  font-size: 0.86rem;
+  font-weight: 500;
+}
+
+.check-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+.field textarea:disabled,
+.field select:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 .compose-form {
   display: grid;
   gap: 1rem;

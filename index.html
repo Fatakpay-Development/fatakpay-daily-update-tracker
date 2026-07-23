@@ -34,7 +34,9 @@
   <main class="layout">
     <section class="compose" aria-labelledby="compose-title">
       <h1 id="compose-title">Log today’s work</h1>
-      <p class="lede">Select department and name, write your tasks (one per line), and submit. Updates land under your department — same layout as the WhatsApp group.</p>
+      <p class="lede">Select your department and name, write your tasks (one per line), and submit. After your first submit, you can only update your own entry — not anyone else’s.</p>
+      <p id="cutoffInfo" class="cutoff-info" hidden></p>
+      <p id="identityLockNote" class="identity-lock-note" hidden></p>
 
       <form id="updateForm" class="compose-form" novalidate>
         <div class="field">
@@ -68,7 +70,7 @@
         </div>
 
         <div class="actions">
-          <button type="submit" class="btn-primary">Submit update</button>
+          <button type="submit" id="submitBtn" class="btn-primary">Submit update</button>
           <p id="formStatus" class="form-status" role="status" aria-live="polite"></p>
         </div>
       </form>
@@ -99,6 +101,23 @@
       </div>
 
       <div class="admin-grid">
+        <form id="cutoffForm" class="admin-card">
+          <h3>Submission cutoff (IST)</h3>
+          <p class="field-note">After this time, team members cannot submit. Admins can still submit anytime.</p>
+          <div class="field">
+            <label for="cutoffTime">Cutoff time</label>
+            <input type="time" id="cutoffTime" required />
+          </div>
+          <div class="field">
+            <label class="check-label">
+              <input type="checkbox" id="cutoffEnabled" />
+              Enforce cutoff
+            </label>
+          </div>
+          <button type="submit" class="btn-primary">Save cutoff</button>
+          <p id="adminCutoffStatus" class="form-status" role="status"></p>
+        </form>
+
         <form id="addDeptForm" class="admin-card">
           <h3>Add department</h3>
           <div class="field">

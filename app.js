@@ -1,6 +1,8 @@
 (function () {
   const ADMIN_SESSION_KEY = "dayline_admin_session";
+  const CLAIM_KEY = "dayline_identity_claim_v1";
   const DEFAULT_ACCENTS = ["#2b5aa0", "#0d7a6f", "#c45c26", "#6b4c9a", "#8a5a2b", "#b45309", "#0f766e", "#7c3aed"];
+  const TZ = "Asia/Kolkata";
 
   const defaults = window.DAYLINE_TEAM;
   const firebaseConfig = window.DAYLINE_FIREBASE || {};
@@ -13,10 +15,11 @@
   let db = null;
   let updatesRef = null;
   let teamRef = null;
+  let settingsRef = null;
   let updatesCache = [];
   let team = cloneDefaults();
+  let settings = { cutoffEnabled: false, cutoffTime: "19:00" };
   let isAdmin = sessionStorage.getItem(ADMIN_SESSION_KEY) === "1";
-  let cloudReady = false;
 
   const els = {
     department: document.getElementById("department"),
@@ -49,14 +52,64 @@
     adminMemberStatus: document.getElementById("adminMemberStatus"),
     adminRoster: document.getElementById("adminRoster"),
     syncBanner: document.getElementById("syncBanner"),
+    identityLockNote: document.getElementById("identityLockNote"),
+    cutoffInfo: document.getElementById("cutoffInfo"),
+    submitBtn: document.getElementById("submitBtn"),
+    cutoffForm: document.getElementById("cutoffForm"),
+    cutoffTime: document.getElementById("cutoffTime"),
+    cutoffEnabled: document.getElementById("cutoffEnabled"),
+    adminCutoffStatus: document.getElementById("adminCutoffStatus"),
   };
 
+  function getIndiaParts() {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    }).formatToParts(new Date());
+    const get = (type) => parts.find((p) => p.type === type)?.value || "00";
+    return {
+      date: `${get("year")}-${get("month")}-${get("day")}`,
+      hour: Number(get("hour")),
+      minute: Number(get("minute")),
+    };
+  }
+
   function todayISO() {
-    const d = new Date();
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
-    return `${y}-${m}-${day}`;
+    return getIndiaParts().date;
+  }
+
+  function minutesNow() {
+    const n = getIndiaParts();
+    return n.hour * 60 + n.minute;
+  }
+
+  function parseTimeToMinutes(hhmm) {
+    if (!hhmm || !/^\d{2}:\d{2}$/.test(hhmm)) return null;
+    const [h, m] = hhmm.split(":").map(Number);
+    return h * 60 + m;
+  }
+
+  function formatCutoffDisplay(hhmm) {
+    try {
+      const [h, m] = hhmm.split(":").map(Number);
+      const d = new Date();
+      d.setHours(h, m, 0, 0);
+      return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return hhmm;
+    }
+  }
+
+  function isPastCutoff() {
+    if (!settings.cutoffEnabled || !settings.cutoffTime) return false;
+    const limit = parseTimeToMinutes(settings.cutoffTime);
+    if (limit == null) return false;
+    return minutesNow() > limit;
   }
 
   function cloneDefaults() {
@@ -86,6 +139,30 @@
     };
   }
 
+  function getClaim() {
+    try {
+      const raw = localStorage.getItem(CLAIM_KEY);
+      if (!raw) return null;
+      const claim = JSON.parse(raw);
+      if (!claim || claim.date !== todayISO()) return null;
+      if (!claim.departmentId || !claim.memberName) return null;
+      return claim;
+    } catch {
+      return null;
+    }
+  }
+
+  function setClaim(departmentId, memberName) {
+    localStorage.setItem(
+      CLAIM_KEY,
+      JSON.stringify({
+        date: todayISO(),
+        departmentId,
+        memberName,
+      })
+    );
+  }
+
   function setSyncBanner(message, tone) {
     if (!els.syncBanner) return;
     if (!message) {
@@ -105,6 +182,8 @@
         "Shared sync is not configured yet. Updates stay on this device only. Add Firebase keys in firebase-config.js so the whole team can share one board.",
         "warn"
       );
+      updateCutoffUi();
+      applyIdentityLock();
       return;
     }
 
@@ -113,6 +192,7 @@
       db = firebase.database();
       updatesRef = db.ref("dayline/updates");
       teamRef = db.ref("dayline/team");
+      settingsRef = db.ref("dayline/settings");
 
       updatesRef.on("value", (snap) => {
         const val = snap.val() || {};
@@ -129,6 +209,7 @@
           };
         });
         renderBoards();
+        applyIdentityLock();
       });
 
       teamRef.on("value", (snap) => {
@@ -142,7 +223,18 @@
         refreshAll();
       });
 
-      cloudReady = true;
+      settingsRef.on("value", (snap) => {
+        const val = snap.val() || {};
+        settings = {
+          cutoffEnabled: Boolean(val.cutoffEnabled),
+          cutoffTime: val.cutoffTime || "19:00",
+        };
+        if (els.cutoffTime) els.cutoffTime.value = settings.cutoffTime;
+        if (els.cutoffEnabled) els.cutoffEnabled.checked = settings.cutoffEnabled;
+        updateCutoffUi();
+        applyIdentityLock();
+      });
+
       setSyncBanner("Live sync on — everyone sees the same updates.", "ok");
       setTimeout(() => setSyncBanner(""), 4000);
     } catch (err) {
@@ -168,16 +260,29 @@
     await updatesRef.set(payload);
   }
 
-  async function appendUpdate(entry) {
-    updatesCache.push(entry);
-    if (cloudEnabled && updatesRef) {
-      await updatesRef.child(entry.id).set(entry);
-    }
+  /** One entry per person per day — replace existing tasks for that person. */
+  async function upsertPersonDay(entry) {
+    const remaining = loadUpdates().filter(
+      (u) =>
+        !(
+          u.date === entry.date &&
+          u.departmentId === entry.departmentId &&
+          u.memberName === entry.memberName
+        )
+    );
+    remaining.push(entry);
+    await persistUpdates(remaining);
   }
 
   async function saveTeam() {
     if (cloudEnabled && teamRef) {
       await teamRef.set({ departments: team.departments });
+    }
+  }
+
+  async function saveSettings() {
+    if (cloudEnabled && settingsRef) {
+      await settingsRef.set(settings);
       return;
     }
   }
@@ -214,6 +319,7 @@
 
   function fillDepartments() {
     const selected = els.department.value;
+    const claim = getClaim();
     els.department.innerHTML = '<option value="">Select department</option>';
     team.departments.forEach((dept) => {
       const opt = document.createElement("option");
@@ -221,12 +327,15 @@
       opt.textContent = dept.name;
       els.department.appendChild(opt);
     });
-    if (selected && findDept(selected)) {
+    if (claim && !isAdmin && findDept(claim.departmentId)) {
+      els.department.value = claim.departmentId;
+    } else if (selected && findDept(selected)) {
       els.department.value = selected;
     }
   }
 
   function fillMembers(deptId) {
+    const claim = getClaim();
     els.member.innerHTML = '<option value="">Select name</option>';
     const dept = findDept(deptId);
     const hasMembers = Boolean(dept && dept.members.length);
@@ -246,6 +355,9 @@
       });
       els.member.disabled = false;
       els.memberNote.hidden = true;
+      if (claim && !isAdmin && claim.departmentId === deptId) {
+        els.member.value = claim.memberName;
+      }
     } else {
       els.member.disabled = true;
       els.memberNote.hidden = false;
@@ -263,6 +375,87 @@
     });
     if (selected && findDept(selected)) {
       els.adminDeptSelect.value = selected;
+    }
+  }
+
+  function getSelfTasks(departmentId, memberName) {
+    return getDayUpdates(todayISO())
+      .filter((u) => u.departmentId === departmentId && u.memberName === memberName)
+      .flatMap((u) => (Array.isArray(u.tasks) ? u.tasks : []));
+  }
+
+  function prefillSelfTasks() {
+    const claim = getClaim();
+    if (!claim || isAdmin) return;
+    const tasks = getSelfTasks(claim.departmentId, claim.memberName);
+    if (tasks.length === 0) return;
+    // Only prefill if textarea empty, so we don't wipe in-progress typing
+    if (els.task.value.trim()) return;
+    els.task.value = tasks.join("\n");
+    els.charCount.textContent = String(els.task.value.length);
+  }
+
+  function updateCutoffUi() {
+    if (!els.cutoffInfo) return;
+    if (settings.cutoffEnabled && settings.cutoffTime) {
+      const closed = isPastCutoff();
+      els.cutoffInfo.hidden = false;
+      els.cutoffInfo.textContent = closed
+        ? `Submissions closed for today after ${formatCutoffDisplay(settings.cutoffTime)} IST.`
+        : `Submit by ${formatCutoffDisplay(settings.cutoffTime)} IST today.`;
+      els.cutoffInfo.classList.toggle("closed", closed);
+    } else {
+      els.cutoffInfo.hidden = true;
+      els.cutoffInfo.textContent = "";
+      els.cutoffInfo.classList.remove("closed");
+    }
+  }
+
+  function applyIdentityLock() {
+    const claim = getClaim();
+    const locked = Boolean(claim) && !isAdmin;
+    const closed = isPastCutoff() && !isAdmin;
+
+    if (els.identityLockNote) {
+      if (locked) {
+        els.identityLockNote.hidden = false;
+        els.identityLockNote.textContent = `Signed in as ${claim.memberName} for today. You can add or edit your own update only — not someone else’s.`;
+      } else {
+        els.identityLockNote.hidden = true;
+        els.identityLockNote.textContent = "";
+      }
+    }
+
+    fillDepartments();
+    fillMembers(els.department.value || (claim && claim.departmentId) || "");
+
+    if (locked) {
+      els.department.value = claim.departmentId;
+      fillMembers(claim.departmentId);
+      els.member.value = claim.memberName;
+      els.department.disabled = true;
+      els.member.disabled = true;
+      prefillSelfTasks();
+      if (els.submitBtn) els.submitBtn.textContent = "Update my entry";
+    } else {
+      els.department.disabled = false;
+      if (els.department.value) {
+        fillMembers(els.department.value);
+        els.member.disabled = !findDept(els.department.value)?.members.length;
+      }
+      if (els.submitBtn) els.submitBtn.textContent = isAdmin ? "Submit update (admin)" : "Submit update";
+    }
+
+    if (els.submitBtn) {
+      els.submitBtn.disabled = closed;
+      els.task.disabled = closed;
+    }
+
+    if (closed && !isAdmin) {
+      setFormStatus(
+        `Submissions are closed for today after ${formatCutoffDisplay(settings.cutoffTime)} IST. Please contact an admin if you need a change.`,
+        true
+      );
     }
   }
 
@@ -437,10 +630,9 @@
   }
 
   function refreshAll() {
-    fillDepartments();
-    fillMembers(els.department.value);
     fillAdminDeptSelect();
     renderBoards();
+    applyIdentityLock();
     if (isAdmin) renderAdminRoster();
   }
 
@@ -492,9 +684,12 @@
     els.adminPanel.hidden = !isAdmin;
     els.adminToggleBtn.textContent = isAdmin ? "Admin panel" : "Admin";
     els.adminToggleBtn.classList.toggle("is-active", isAdmin);
+    applyIdentityLock();
     if (isAdmin) {
       fillAdminDeptSelect();
       renderAdminRoster();
+      if (els.cutoffTime) els.cutoffTime.value = settings.cutoffTime || "19:00";
+      if (els.cutoffEnabled) els.cutoffEnabled.checked = Boolean(settings.cutoffEnabled);
       els.adminPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }
@@ -519,8 +714,29 @@
   }
 
   els.department.addEventListener("change", () => {
+    if (!isAdmin && getClaim()) {
+      applyIdentityLock();
+      setFormStatus(
+        `You've already submitted as ${getClaim().memberName} today. You can only update your own entry — not someone else's.`,
+        true
+      );
+      return;
+    }
     fillMembers(els.department.value);
     setFormStatus("");
+  });
+
+  els.member.addEventListener("change", () => {
+    const claim = getClaim();
+    if (!isAdmin && claim && els.member.value && els.member.value !== claim.memberName) {
+      els.member.value = claim.memberName;
+      setFormStatus(
+        `You've already submitted as ${claim.memberName} today. You can only update your own entry — not someone else's.`,
+        true
+      );
+    } else {
+      setFormStatus("");
+    }
   });
 
   els.task.addEventListener("input", () => {
@@ -533,10 +749,19 @@
     event.preventDefault();
     if (!requireCloudForShare()) return;
 
+    if (!isAdmin && isPastCutoff()) {
+      setFormStatus(
+        `Submissions are closed for today after ${formatCutoffDisplay(settings.cutoffTime)} IST. Please contact an admin if you need a change.`,
+        true
+      );
+      return;
+    }
+
     const departmentId = els.department.value;
     const memberName = els.member.value.trim();
     const tasks = parseTasks(els.task.value);
     const dept = findDept(departmentId);
+    const claim = getClaim();
 
     if (!departmentId || !dept) {
       setFormStatus("Please select a department.", true);
@@ -550,6 +775,20 @@
       setFormStatus("Selected name is not in this department. Ask an admin to add it.", true);
       return;
     }
+
+    if (
+      !isAdmin &&
+      claim &&
+      (claim.memberName !== memberName || claim.departmentId !== departmentId)
+    ) {
+      setFormStatus(
+        `You've already submitted as ${claim.memberName} today. You can only update your own entry — not someone else's.`,
+        true
+      );
+      applyIdentityLock();
+      return;
+    }
+
     if (tasks.length === 0) {
       setFormStatus("Please write at least one task (one per line).", true);
       return;
@@ -566,13 +805,19 @@
     };
 
     try {
-      await appendUpdate(entry);
-      els.task.value = "";
-      els.charCount.textContent = "0";
+      await upsertPersonDay(entry);
+      if (!isAdmin) setClaim(departmentId, memberName);
+
       els.viewDate.value = todayISO();
       setFormStatus(
-        `Added ${tasks.length} task${tasks.length === 1 ? "" : "s"} under ${dept.name} → ${memberName}.`
+        claim || getSelfTasks(departmentId, memberName).length
+          ? `Your update was saved under ${dept.name} → ${memberName}.`
+          : `Submitted under ${dept.name} → ${memberName}.`
       );
+      applyIdentityLock();
+      // After lock, show saved tasks in the form for further edits
+      els.task.value = tasks.join("\n");
+      els.charCount.textContent = String(els.task.value.length);
       renderBoards();
     } catch (err) {
       console.error(err);
@@ -614,6 +859,7 @@
   });
 
   els.clearDayBtn.addEventListener("click", async () => {
+    if (!requireAdmin()) return;
     const date = els.viewDate.value || todayISO();
     if (!confirm(`Clear all updates for ${date} for everyone on the shared board?`)) return;
     if (!requireCloudForShare()) return;
@@ -659,7 +905,7 @@
     sessionStorage.setItem(ADMIN_SESSION_KEY, "1");
     els.adminLoginDialog.close();
     setAdminUi();
-    setFormStatus("Admin unlocked. You can manage departments and names.");
+    setFormStatus("Admin unlocked. You can manage the team, cutoff time, and submit for anyone.");
   });
 
   els.adminLogoutBtn.addEventListener("click", () => {
@@ -667,6 +913,38 @@
     sessionStorage.removeItem(ADMIN_SESSION_KEY);
     setAdminUi();
     setFormStatus("Admin logged out.");
+  });
+
+  els.cutoffForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!requireAdmin()) return;
+    if (!requireCloudForShare()) return;
+
+    const time = els.cutoffTime.value;
+    if (!time) {
+      setStatus(els.adminCutoffStatus, "Pick a cutoff time.", true);
+      return;
+    }
+
+    settings = {
+      cutoffEnabled: Boolean(els.cutoffEnabled.checked),
+      cutoffTime: time,
+    };
+
+    try {
+      await saveSettings();
+      setStatus(
+        els.adminCutoffStatus,
+        settings.cutoffEnabled
+          ? `Cutoff saved: submissions close at ${formatCutoffDisplay(time)} IST.`
+          : "Cutoff saved (enforcement is off)."
+      );
+      updateCutoffUi();
+      applyIdentityLock();
+    } catch (err) {
+      console.error(err);
+      setStatus(els.adminCutoffStatus, "Could not save cutoff.", true);
+    }
   });
 
   els.addDeptForm.addEventListener("submit", async (event) => {
@@ -770,7 +1048,6 @@
     }
   });
 
-  fillDepartments();
   els.viewDate.value = todayISO();
   renderBoards();
   setAdminUi();

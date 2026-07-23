@@ -1,27 +1,14 @@
 /**
- * Shared cloud config — required so everyone sees the same updates.
- *
- * One-time setup (~5 min):
- * 1. Open https://console.firebase.google.com/ and create a project (e.g. fatakpay-dayline)
- * 2. Build → Realtime Database → Create database → Start in **test mode** → Choose any region
- * 3. Project settings (gear icon) → Your apps → Web app </>) → Register app
- * 4. Copy the firebaseConfig object values into this file
- * 5. Commit & push so GitHub Pages updates
- *
- * Realtime Database rules (Rules tab) — use for internal team:
- * {
- *   "rules": {
- *     ".read": true,
- *     ".write": true
- *   }
- * }
+ * Shared Firebase config for FatakPay Dayline.
+ * Realtime Database must be created in the Firebase console (not only Firestore).
  */
 window.DAYLINE_FIREBASE = {
-  apiKey: "",
-  authDomain: "",
-  databaseURL: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: "",
+  apiKey: "AIzaSyAmono0VPGuJ97rqmKHbtDxnqIjg30sQn8",
+  authDomain: "daily-update-tracker-90115.firebaseapp.com",
+  databaseURL: "https://daily-update-tracker-90115-default-rtdb.firebaseio.com",
+  projectId: "daily-update-tracker-90115",
+  storageBucket: "daily-update-tracker-90115.firebasestorage.app",
+  messagingSenderId: "71482427337",
+  appId: "1:71482427337:web:2fe117235e991c84b00a18",
+  measurementId: "G-E32P6C6704",
 };
