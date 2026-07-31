@@ -28,6 +28,8 @@
     department: document.getElementById("department"),
     member: document.getElementById("member"),
     memberNote: document.getElementById("memberNote"),
+    dayStatus: document.getElementById("dayStatus"),
+    taskField: document.getElementById("taskField"),
     task: document.getElementById("task"),
     form: document.getElementById("updateForm"),
     status: document.getElementById("formStatus"),
@@ -340,6 +342,7 @@
             departmentName: row.departmentName,
             memberName: row.memberName,
             tasks: Array.isArray(row.tasks) ? row.tasks : [],
+            onLeave: Boolean(row.onLeave),
             date: row.date,
             createdAt: row.createdAt,
           };
@@ -527,12 +530,35 @@
       .flatMap((u) => (Array.isArray(u.tasks) ? u.tasks : []));
   }
 
+  function syncLeaveUi() {
+    const onLeave = els.dayStatus && els.dayStatus.value === "leave";
+    if (els.taskField) els.taskField.hidden = onLeave;
+    if (els.task) {
+      els.task.required = !onLeave;
+      if (onLeave) {
+        els.task.value = "";
+        if (els.charCount) els.charCount.textContent = "0";
+      }
+    }
+  }
+
   function prefillSelfTasks() {
     const claim = getClaim();
     if (!claim || isAdmin) return;
-    const tasks = getSelfTasks(claim.departmentId, claim.memberName);
+    const entries = getDayUpdates(todayISO()).filter(
+      (u) => u.departmentId === claim.departmentId && u.memberName === claim.memberName
+    );
+    if (entries.length === 0) return;
+
+    const onLeave = entries.some((u) => u.onLeave);
+    if (els.dayStatus) {
+      els.dayStatus.value = onLeave ? "leave" : "working";
+      syncLeaveUi();
+    }
+    if (onLeave) return;
+
+    const tasks = entries.flatMap((u) => (Array.isArray(u.tasks) ? u.tasks : [])).filter(Boolean);
     if (tasks.length === 0) return;
-    // Only prefill if textarea empty, so we don't wipe in-progress typing
     if (els.task.value.trim()) return;
     els.task.value = tasks.join("\n");
     els.charCount.textContent = String(els.task.value.length);
@@ -592,6 +618,7 @@
     if (els.submitBtn) {
       els.submitBtn.disabled = closed;
       els.task.disabled = closed;
+      if (els.dayStatus) els.dayStatus.disabled = closed;
     }
 
     if (closed && !isAdmin) {
@@ -644,13 +671,14 @@
   }
 
   function tasksTextForPerson(allUpdates, date, departmentId, memberName) {
-    const tasks = allUpdates
-      .filter(
-        (u) =>
-          u.date === date &&
-          u.departmentId === departmentId &&
-          u.memberName === memberName
-      )
+    const personEntries = allUpdates.filter(
+      (u) =>
+        u.date === date &&
+        u.departmentId === departmentId &&
+        u.memberName === memberName
+    );
+    if (personEntries.some((u) => u.onLeave)) return "Leave";
+    const tasks = personEntries
       .flatMap((u) => (Array.isArray(u.tasks) ? u.tasks : []))
       .filter(Boolean);
     if (tasks.length === 0) return "";
@@ -771,12 +799,18 @@
         byMember.set(entry.memberName, {
           memberName: entry.memberName,
           tasks: [],
+          onLeave: false,
           lastAt: entry.createdAt,
         });
       }
       const person = byMember.get(entry.memberName);
-      const tasks = Array.isArray(entry.tasks) ? entry.tasks : [entry.task].filter(Boolean);
-      tasks.forEach((t) => person.tasks.push(t));
+      if (entry.onLeave) {
+        person.onLeave = true;
+        person.tasks = ["Leave"];
+      } else if (!person.onLeave) {
+        const tasks = Array.isArray(entry.tasks) ? entry.tasks : [entry.task].filter(Boolean);
+        tasks.forEach((t) => person.tasks.push(t));
+      }
       if (new Date(entry.createdAt) > new Date(person.lastAt)) {
         person.lastAt = entry.createdAt;
       }
@@ -812,9 +846,13 @@
         const person = members.get(name);
         if (!person) return;
         lines.push(name);
-        person.tasks.forEach((task, i) => {
-          lines.push(`${i + 1}. ${task}`);
-        });
+        if (person.onLeave) {
+          lines.push("*Leave*");
+        } else {
+          person.tasks.forEach((task, i) => {
+            lines.push(`${i + 1}. ${task}`);
+          });
+        }
         lines.push("");
       });
 
@@ -879,19 +917,27 @@
           const person = members.get(name);
           if (!person) return;
           const block = document.createElement("div");
-          block.className = "person-block";
-          const tasksHtml = person.tasks
-            .map(
-              (t, i) =>
-                `<li><span class="task-num">${i + 1}.</span> <span class="task-body">${escapeHtml(t)}</span></li>`
-            )
-            .join("");
+          block.className = person.onLeave ? "person-block is-leave" : "person-block";
+          let bodyHtml;
+          if (person.onLeave) {
+            bodyHtml = `<p class="leave-mark" role="status"><strong>Leave</strong></p>`;
+          } else {
+            const tasksHtml = person.tasks
+              .map(
+                (t, i) =>
+                  `<li><span class="task-num">${i + 1}.</span> <span class="task-body">${escapeHtml(t)}</span></li>`
+              )
+              .join("");
+            bodyHtml = `<ol class="task-list">${tasksHtml}</ol>`;
+          }
           block.innerHTML = `
             <div class="person-head">
-              <span class="update-name">${escapeHtml(person.memberName)}</span>
+              <span class="update-name">${escapeHtml(person.memberName)}${
+                person.onLeave ? ' <span class="leave-badge">Leave</span>' : ""
+              }</span>
               <span class="update-time">${escapeHtml(formatTime(person.lastAt))}</span>
             </div>
-            <ol class="task-list">${tasksHtml}</ol>
+            ${bodyHtml}
           `;
           wrap.appendChild(block);
         });
@@ -1039,6 +1085,13 @@
     els.charCount.textContent = String(els.task.value.length);
   });
 
+  if (els.dayStatus) {
+    els.dayStatus.addEventListener("change", () => {
+      syncLeaveUi();
+      setFormStatus("");
+    });
+  }
+
   els.viewDate.addEventListener("change", renderBoards);
 
   els.form.addEventListener("submit", async (event) => {
@@ -1056,7 +1109,8 @@
 
     const departmentId = els.department.value;
     const memberName = els.member.value.trim();
-    const tasks = parseTasks(els.task.value);
+    const onLeave = els.dayStatus && els.dayStatus.value === "leave";
+    const tasks = onLeave ? ["Leave"] : parseTasks(els.task.value);
     const dept = findDept(departmentId);
 
     if (!departmentId || !dept) {
@@ -1071,8 +1125,8 @@
       setFormStatus("Selected name is not in this department. Ask an admin to add it.", true);
       return;
     }
-    if (tasks.length === 0) {
-      setFormStatus("Please write at least one task (one per line).", true);
+    if (!onLeave && tasks.length === 0) {
+      setFormStatus("Please write at least one task, or choose Leave.", true);
       return;
     }
 
@@ -1094,6 +1148,7 @@
         departmentName: dept.name,
         memberName,
         tasks,
+        onLeave: Boolean(onLeave),
         date: todayISO(),
         createdAt: new Date().toISOString(),
       };
@@ -1101,10 +1156,16 @@
       await upsertPersonDay(entry);
 
       els.viewDate.value = todayISO();
-      setFormStatus(`Saved under ${dept.name} → ${memberName}.`);
+      setFormStatus(
+        onLeave
+          ? `Marked on Leave under ${dept.name} → ${memberName}.`
+          : `Saved under ${dept.name} → ${memberName}.`
+      );
       applyIdentityLock();
-      els.task.value = tasks.join("\n");
-      els.charCount.textContent = String(els.task.value.length);
+      if (!onLeave) {
+        els.task.value = tasks.join("\n");
+        els.charCount.textContent = String(els.task.value.length);
+      }
       renderBoards();
     } catch (err) {
       console.error(err);
@@ -1347,5 +1408,6 @@
   els.viewDate.value = todayISO();
   renderBoards();
   setAdminUi();
+  syncLeaveUi();
   initCloud();
 })();

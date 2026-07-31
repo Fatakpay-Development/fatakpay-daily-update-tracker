@@ -56,15 +56,23 @@
           </p>
         </div>
 
-        <div class="field field-wide">
+        <div class="field">
+          <label for="dayStatus">Today’s status</label>
+          <select id="dayStatus" name="dayStatus" required>
+            <option value="working">Working — add tasks below</option>
+            <option value="leave">Leave</option>
+          </select>
+          <p class="field-note">Choose <strong>Leave</strong> if you are on leave — it will show in bold on the board.</p>
+        </div>
+
+        <div class="field field-wide" id="taskField">
           <label for="task">Tasks for today</label>
           <textarea
             id="task"
             name="task"
             rows="6"
             maxlength="4000"
-            placeholder="One task per line, e.g.&#10;Remove FatakCoins from Membership for Smart Plan. Sign-off done.&#10;Product 336 Digital PL — Pilot Fixes &amp; E2E QA. Raised on Jira.&#10;Leave"
-            required
+            placeholder="One task per line, e.g.&#10;Remove FatakCoins from Membership for Smart Plan. Sign-off done.&#10;Product 336 Digital PL — Pilot Fixes &amp; E2E QA. Raised on Jira."
           ></textarea>
           <p class="hint"><span id="charCount">0</span>/4000 · one task per line</p>
         </div>

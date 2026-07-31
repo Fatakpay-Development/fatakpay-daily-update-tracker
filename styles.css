@@ -445,8 +445,38 @@ body {
   border-bottom: 1px solid var(--line);
 }
 
+.person-block.is-leave {
+  background: linear-gradient(90deg, rgba(180, 35, 24, 0.06), transparent 70%);
+}
+
 .person-block:last-child {
   border-bottom: none;
+}
+
+.leave-badge {
+  display: inline-block;
+  margin-left: 0.4rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: 6px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #fff;
+  background: var(--danger);
+  vertical-align: middle;
+}
+
+.leave-mark {
+  margin: 0.15rem 0 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--danger);
+  letter-spacing: 0.01em;
+}
+
+.leave-mark strong {
+  font-weight: 700;
 }
 
 .person-head {
