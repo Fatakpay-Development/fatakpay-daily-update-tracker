@@ -38,6 +38,7 @@
     exportBtn: document.getElementById("exportBtn"),
     clearDayBtn: document.getElementById("clearDayBtn"),
     copyWhatsAppBtn: document.getElementById("copyWhatsAppBtn"),
+    excelBtn: document.getElementById("excelBtn"),
     adminToggleBtn: document.getElementById("adminToggleBtn"),
     adminPanel: document.getElementById("adminPanel"),
     adminLogoutBtn: document.getElementById("adminLogoutBtn"),
@@ -601,6 +602,146 @@
     }
   }
 
+  function formatDateDisplay(isoDate) {
+    // 2026-07-23 → 23-07-2026 (senior sheet style)
+    const m = String(isoDate || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return isoDate || "";
+    return `${m[3]}-${m[2]}-${m[1]}`;
+  }
+
+  function sheetNameSafe(name) {
+    const cleaned = String(name || "Sheet")
+      .replace(/[\\/?*\[\]:]/g, "-")
+      .trim()
+      .slice(0, 31);
+    return cleaned || "Sheet";
+  }
+
+  function uniqueSheetName(base, used) {
+    let name = sheetNameSafe(base);
+    if (!used.has(name)) {
+      used.add(name);
+      return name;
+    }
+    let n = 2;
+    while (used.has(`${name.slice(0, 28)}-${n}`)) n += 1;
+    const finalName = `${name.slice(0, 28)}-${n}`;
+    used.add(finalName);
+    return finalName;
+  }
+
+  function memberColumnsForDept(dept, allUpdates) {
+    const fromRoster = Array.isArray(dept.members) ? [...dept.members] : [];
+    const extras = [];
+    allUpdates
+      .filter((u) => u.departmentId === dept.id)
+      .forEach((u) => {
+        if (u.memberName && !fromRoster.includes(u.memberName) && !extras.includes(u.memberName)) {
+          extras.push(u.memberName);
+        }
+      });
+    return [...fromRoster, ...extras];
+  }
+
+  function tasksTextForPerson(allUpdates, date, departmentId, memberName) {
+    const tasks = allUpdates
+      .filter(
+        (u) =>
+          u.date === date &&
+          u.departmentId === departmentId &&
+          u.memberName === memberName
+      )
+      .flatMap((u) => (Array.isArray(u.tasks) ? u.tasks : []))
+      .filter(Boolean);
+    if (tasks.length === 0) return "";
+    return tasks.map((t, i) => `${i + 1}. ${t}`).join("\n");
+  }
+
+  /** Build senior-style workbook: one sheet per team, Date | names as columns. */
+  function buildExcelWorkbook(allUpdates) {
+    if (typeof XLSX === "undefined") {
+      throw new Error("Excel library failed to load. Refresh the page and try again.");
+    }
+
+    const dates = [...new Set(allUpdates.map((u) => u.date).filter(Boolean))].sort();
+    if (dates.length === 0) {
+      throw new Error("No updates available to export yet.");
+    }
+
+    const wb = XLSX.utils.book_new();
+    const usedNames = new Set();
+
+    team.departments.forEach((dept) => {
+      const members = memberColumnsForDept(dept, allUpdates);
+      if (members.length === 0) return;
+
+      // Row 1: team title (A1 blank/Date label area, B1.. merged conceptually as team name)
+      // Row 2: Date | member names
+      // Row 3+: data
+      const headerTeam = ["Date", dept.name, ...Array(Math.max(members.length - 1, 0)).fill("")];
+      const headerNames = ["Date", ...members];
+      const rows = [headerTeam, headerNames];
+
+      dates.forEach((date) => {
+        const row = [formatDateDisplay(date)];
+        members.forEach((name) => {
+          row.push(tasksTextForPerson(allUpdates, date, dept.id, name));
+        });
+        // Skip empty date rows for this team (no one submitted)
+        const hasAny = row.slice(1).some((cell) => String(cell).trim());
+        if (hasAny) rows.push(row);
+      });
+
+      // Keep sheet even if empty of data — still useful roster header for seniors
+      if (rows.length === 2) {
+        rows.push([formatDateDisplay(dates[dates.length - 1] || todayISO()), ...members.map(() => "")]);
+      }
+
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+
+      // Merge team name across member columns (B1: last)
+      if (members.length > 0) {
+        ws["!merges"] = [{ s: { r: 0, c: 1 }, e: { r: 0, c: members.length } }];
+      }
+
+      // Column widths
+      ws["!cols"] = [{ wch: 12 }, ...members.map(() => ({ wch: 36 }))];
+
+      // Wrap text for task cells
+      const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+      for (let R = range.s.r; R <= range.e.r; R += 1) {
+        for (let C = range.s.c; C <= range.e.c; C += 1) {
+          const addr = XLSX.utils.encode_cell({ r: R, c: C });
+          if (!ws[addr]) continue;
+          ws[addr].s = {
+            alignment: { wrapText: true, vertical: "top" },
+            font: { name: "Arial", sz: 11 },
+          };
+        }
+      }
+
+      XLSX.utils.book_append_sheet(wb, ws, uniqueSheetName(dept.name, usedNames));
+    });
+
+    if (!wb.SheetNames.length) {
+      throw new Error("No departments available to export.");
+    }
+    return wb;
+  }
+
+  function downloadExcel() {
+    try {
+      const allUpdates = loadUpdates();
+      const wb = buildExcelWorkbook(allUpdates);
+      const fileName = `Daily-update-${formatDateDisplay(todayISO())}.xlsx`;
+      XLSX.writeFile(wb, fileName);
+      setFormStatus("Excel downloaded — team-wise sheets ready for seniors.");
+    } catch (err) {
+      console.error(err);
+      setFormStatus(err.message || "Could not create Excel file.", true);
+    }
+  }
+
   function escapeHtml(str) {
     return String(str)
       .replace(/&/g, "&amp;")
@@ -994,6 +1135,10 @@
       setFormStatus("WhatsApp-format summary copied to clipboard.");
     }
   });
+
+  if (els.excelBtn) {
+    els.excelBtn.addEventListener("click", downloadExcel);
+  }
 
   els.exportBtn.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(loadUpdates(), null, 2)], {
