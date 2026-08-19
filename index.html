@@ -92,7 +92,6 @@
         </div>
         <div class="board-actions">
           <button type="button" id="copyWhatsAppBtn" class="btn-ghost">Copy for WhatsApp</button>
-          <button type="button" id="excelBtn" class="btn-ghost">Download Excel</button>
         </div>
       </div>
       <div id="departmentBoards" class="department-grid"></div>
@@ -104,12 +103,27 @@
       <div class="admin-panel-head">
         <div>
           <h2>Admin — manage team</h2>
-          <p class="board-meta">Add or remove departments and names. Regular users can only submit updates.</p>
+          <p class="board-meta">Add or remove departments and names. Download a date-range Excel report. Regular users can only submit updates.</p>
         </div>
         <button type="button" id="adminLogoutBtn" class="btn-ghost">Log out</button>
       </div>
 
       <div class="admin-grid">
+        <form id="reportForm" class="admin-card">
+          <h3>Download Excel report</h3>
+          <p class="field-note">Admins only. Pick a date range. Missing employee updates are filled as “No update received today”.</p>
+          <div class="field">
+            <label for="reportStart">Start date</label>
+            <input type="date" id="reportStart" required />
+          </div>
+          <div class="field">
+            <label for="reportEnd">End date</label>
+            <input type="date" id="reportEnd" required />
+          </div>
+          <button type="submit" class="btn-primary">Download Excel</button>
+          <p id="adminReportStatus" class="form-status" role="status"></p>
+        </form>
+
         <form id="cutoffForm" class="admin-card">
           <h3>Submission cutoff (IST)</h3>
           <p class="field-note">After this time, team members cannot submit. Admins can still submit anytime.</p>

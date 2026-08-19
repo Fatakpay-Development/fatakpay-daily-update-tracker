@@ -40,7 +40,6 @@
     exportBtn: document.getElementById("exportBtn"),
     clearDayBtn: document.getElementById("clearDayBtn"),
     copyWhatsAppBtn: document.getElementById("copyWhatsAppBtn"),
-    excelBtn: document.getElementById("excelBtn"),
     adminToggleBtn: document.getElementById("adminToggleBtn"),
     adminPanel: document.getElementById("adminPanel"),
     adminLogoutBtn: document.getElementById("adminLogoutBtn"),
@@ -65,6 +64,10 @@
     cutoffTime: document.getElementById("cutoffTime"),
     cutoffEnabled: document.getElementById("cutoffEnabled"),
     adminCutoffStatus: document.getElementById("adminCutoffStatus"),
+    reportForm: document.getElementById("reportForm"),
+    reportStart: document.getElementById("reportStart"),
+    reportEnd: document.getElementById("reportEnd"),
+    adminReportStatus: document.getElementById("adminReportStatus"),
   };
 
   function getIndiaParts() {
@@ -670,7 +673,7 @@
     return [...fromRoster, ...extras];
   }
 
-  function tasksTextForPerson(allUpdates, date, departmentId, memberName) {
+  function tasksTextForPerson(allUpdates, date, departmentId, memberName, fillMissing) {
     const personEntries = allUpdates.filter(
       (u) =>
         u.date === date &&
@@ -681,31 +684,56 @@
     const tasks = personEntries
       .flatMap((u) => (Array.isArray(u.tasks) ? u.tasks : []))
       .filter(Boolean);
-    if (tasks.length === 0) return "";
+    if (tasks.length === 0) {
+      return fillMissing ? "No update received today" : "";
+    }
     return tasks.map((t, i) => `${i + 1}. ${t}`).join("\n");
   }
 
-  /** Build senior-style workbook: one sheet per team, Date | names as columns. */
-  function buildExcelWorkbook(allUpdates) {
+  function datesInRange(startISO, endISO) {
+    const start = new Date(`${startISO}T00:00:00`);
+    const end = new Date(`${endISO}T00:00:00`);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+      return [];
+    }
+    const dates = [];
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const y = cursor.getFullYear();
+      const m = String(cursor.getMonth() + 1).padStart(2, "0");
+      const d = String(cursor.getDate()).padStart(2, "0");
+      dates.push(`${y}-${m}-${d}`);
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return dates;
+  }
+
+  /** Senior-style workbook: one sheet per team, Date | names as columns. */
+  function buildExcelWorkbook(allUpdates, options) {
+    const opts = options || {};
+    const fillMissing = Boolean(opts.fillMissing);
+    let dates = Array.isArray(opts.dates) ? opts.dates.slice() : [];
+
     if (typeof XLSX === "undefined") {
       throw new Error("Excel library failed to load. Refresh the page and try again.");
     }
 
-    const dates = [...new Set(allUpdates.map((u) => u.date).filter(Boolean))].sort();
     if (dates.length === 0) {
-      throw new Error("No updates available to export yet.");
+      dates = [...new Set(allUpdates.map((u) => u.date).filter(Boolean))].sort();
+    }
+    if (dates.length === 0) {
+      throw new Error("No dates available to export.");
     }
 
     const wb = XLSX.utils.book_new();
     const usedNames = new Set();
 
     team.departments.forEach((dept) => {
-      const members = memberColumnsForDept(dept, allUpdates);
+      const members = fillMissing
+        ? (Array.isArray(dept.members) ? [...dept.members] : [])
+        : memberColumnsForDept(dept, allUpdates);
       if (members.length === 0) return;
 
-      // Row 1: team title (A1 blank/Date label area, B1.. merged conceptually as team name)
-      // Row 2: Date | member names
-      // Row 3+: data
       const headerTeam = ["Date", dept.name, ...Array(Math.max(members.length - 1, 0)).fill("")];
       const headerNames = ["Date", ...members];
       const rows = [headerTeam, headerNames];
@@ -713,29 +741,28 @@
       dates.forEach((date) => {
         const row = [formatDateDisplay(date)];
         members.forEach((name) => {
-          row.push(tasksTextForPerson(allUpdates, date, dept.id, name));
+          row.push(tasksTextForPerson(allUpdates, date, dept.id, name, fillMissing));
         });
-        // Skip empty date rows for this team (no one submitted)
+        if (fillMissing) {
+          rows.push(row);
+          return;
+        }
         const hasAny = row.slice(1).some((cell) => String(cell).trim());
         if (hasAny) rows.push(row);
       });
 
-      // Keep sheet even if empty of data — still useful roster header for seniors
       if (rows.length === 2) {
         rows.push([formatDateDisplay(dates[dates.length - 1] || todayISO()), ...members.map(() => "")]);
       }
 
       const ws = XLSX.utils.aoa_to_sheet(rows);
 
-      // Merge team name across member columns (B1: last)
       if (members.length > 0) {
         ws["!merges"] = [{ s: { r: 0, c: 1 }, e: { r: 0, c: members.length } }];
       }
 
-      // Column widths
       ws["!cols"] = [{ wch: 12 }, ...members.map(() => ({ wch: 36 }))];
 
-      // Wrap text for task cells
       const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
       for (let R = range.s.r; R <= range.e.r; R += 1) {
         for (let C = range.s.c; C <= range.e.c; C += 1) {
@@ -757,17 +784,18 @@
     return wb;
   }
 
-  function downloadExcel() {
-    try {
-      const allUpdates = loadUpdates();
-      const wb = buildExcelWorkbook(allUpdates);
-      const fileName = `Daily-update-${formatDateDisplay(todayISO())}.xlsx`;
-      XLSX.writeFile(wb, fileName);
-      setFormStatus("Excel downloaded — team-wise sheets ready for seniors.");
-    } catch (err) {
-      console.error(err);
-      setFormStatus(err.message || "Could not create Excel file.", true);
+  function downloadRangeExcel(startISO, endISO) {
+    const dates = datesInRange(startISO, endISO);
+    if (dates.length === 0) {
+      throw new Error("Pick a valid start and end date (start cannot be after end).");
     }
+    if (dates.length > 93) {
+      throw new Error("Please choose a range of 93 days or less.");
+    }
+    const allUpdates = loadUpdates();
+    const wb = buildExcelWorkbook(allUpdates, { dates, fillMissing: true });
+    const fileName = `Daily-update-${formatDateDisplay(startISO)}-to-${formatDateDisplay(endISO)}.xlsx`;
+    XLSX.writeFile(wb, fileName);
   }
 
   function escapeHtml(str) {
@@ -1019,6 +1047,8 @@
       renderAdminRoster();
       if (els.cutoffTime) els.cutoffTime.value = settings.cutoffTime || "19:00";
       if (els.cutoffEnabled) els.cutoffEnabled.checked = Boolean(settings.cutoffEnabled);
+      if (els.reportStart && !els.reportStart.value) els.reportStart.value = todayISO();
+      if (els.reportEnd && !els.reportEnd.value) els.reportEnd.value = todayISO();
       els.adminPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   }
@@ -1197,10 +1227,6 @@
     }
   });
 
-  if (els.excelBtn) {
-    els.excelBtn.addEventListener("click", downloadExcel);
-  }
-
   els.exportBtn.addEventListener("click", () => {
     const blob = new Blob([JSON.stringify(loadUpdates(), null, 2)], {
       type: "application/json",
@@ -1271,6 +1297,29 @@
     setAdminUi();
     setFormStatus("Admin logged out.");
   });
+
+  if (els.reportForm) {
+    els.reportForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!requireAdmin()) return;
+      const startISO = els.reportStart.value;
+      const endISO = els.reportEnd.value;
+      if (!startISO || !endISO) {
+        setStatus(els.adminReportStatus, "Select start date and end date.", true);
+        return;
+      }
+      try {
+        downloadRangeExcel(startISO, endISO);
+        setStatus(
+          els.adminReportStatus,
+          `Excel downloaded for ${formatDateDisplay(startISO)} to ${formatDateDisplay(endISO)}. Missing updates are marked “No update received today”.`
+        );
+      } catch (err) {
+        console.error(err);
+        setStatus(els.adminReportStatus, err.message || "Could not create Excel file.", true);
+      }
+    });
+  }
 
   els.cutoffForm.addEventListener("submit", async (event) => {
     event.preventDefault();
