@@ -1,5 +1,5 @@
 /**
- * Shared Firebase config for FatakPay Dayline.
+ * Shared Firebase config for Fatakpay daily updates.
  * Realtime Database must be created in the Firebase console (not only Firestore).
  */
 window.DAYLINE_FIREBASE = {

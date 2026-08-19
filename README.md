@@ -1,4 +1,4 @@
-# Dayline — FatakPay Daily Update Tracker
+# Fatakpay Daily Update Tracker
 
 Website for the team to log daily work by department — same structure as the WhatsApp group updates.
 
