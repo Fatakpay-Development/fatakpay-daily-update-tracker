@@ -1,5 +1,6 @@
 (function () {
   const ADMIN_SESSION_KEY = "dayline_admin_session";
+  const ADMIN_PASS_DIGEST = "6c7a38b595d8a722021e0ec1f87f768250881def20e9c8362c0c64027ab18e0c";
   const CLAIM_KEY = "dayline_identity_claim_v2";
   const DEFAULT_ACCENTS = ["#2b5aa0", "#0d7a6f", "#c45c26", "#6b4c9a", "#8a5a2b", "#b45309", "#0f766e", "#7c3aed"];
   const TZ = "Asia/Kolkata";
@@ -21,7 +22,7 @@
   let claimsCache = {}; // { [deptId]: { [safeMember]: { token, memberName, ... } } }
   let team = cloneDefaults();
   let settings = { cutoffEnabled: false, cutoffTime: "19:00" };
-  let isAdmin = sessionStorage.getItem(ADMIN_SESSION_KEY) === "1";
+  let isAdmin = sessionStorage.getItem(ADMIN_SESSION_KEY) === ADMIN_PASS_DIGEST;
   let submitInFlight = false;
 
   const els = {
@@ -1037,7 +1038,7 @@
     });
   }
 
-  function setAdminUi() {
+  function setAdminUi(opts = {}) {
     els.adminPanel.hidden = !isAdmin;
     els.adminToggleBtn.textContent = isAdmin ? "Admin panel" : "Admin";
     els.adminToggleBtn.classList.toggle("is-active", isAdmin);
@@ -1049,7 +1050,9 @@
       if (els.cutoffEnabled) els.cutoffEnabled.checked = Boolean(settings.cutoffEnabled);
       if (els.reportStart && !els.reportStart.value) els.reportStart.value = todayISO();
       if (els.reportEnd && !els.reportEnd.value) els.reportEnd.value = todayISO();
-      els.adminPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (opts.scroll !== false) {
+        els.adminPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
     }
   }
 
@@ -1277,24 +1280,42 @@
     els.adminLoginDialog.close();
   });
 
-  els.adminLoginForm.addEventListener("submit", (event) => {
+  async function digestText(text) {
+    const bytes = new TextEncoder().encode(text);
+    const buf = await crypto.subtle.digest("SHA-256", bytes);
+    return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  els.adminLoginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const entered = els.adminPassword.value;
-    if (entered !== defaults.adminPassword) {
-      els.adminLoginError.textContent = "Incorrect password.";
-      return;
+    els.adminLoginError.textContent = "";
+    const submitBtn = els.adminLoginForm.querySelector('button[type="submit"]');
+    if (submitBtn) submitBtn.disabled = true;
+    try {
+      const digest = await digestText(entered);
+      if (digest !== ADMIN_PASS_DIGEST) {
+        els.adminLoginError.textContent = "Incorrect password.";
+        return;
+      }
+      isAdmin = true;
+      sessionStorage.setItem(ADMIN_SESSION_KEY, digest);
+      els.adminPassword.value = "";
+      els.adminLoginDialog.close();
+      setAdminUi();
+      setFormStatus("Admin unlocked. You can manage the team, cutoff time, and submit for anyone.");
+    } catch (err) {
+      console.error(err);
+      els.adminLoginError.textContent = "Could not verify password.";
+    } finally {
+      if (submitBtn) submitBtn.disabled = false;
     }
-    isAdmin = true;
-    sessionStorage.setItem(ADMIN_SESSION_KEY, "1");
-    els.adminLoginDialog.close();
-    setAdminUi();
-    setFormStatus("Admin unlocked. You can manage the team, cutoff time, and submit for anyone.");
   });
 
   els.adminLogoutBtn.addEventListener("click", () => {
     isAdmin = false;
     sessionStorage.removeItem(ADMIN_SESSION_KEY);
-    setAdminUi();
+    setAdminUi({ scroll: false });
     setFormStatus("Admin logged out.");
   });
 

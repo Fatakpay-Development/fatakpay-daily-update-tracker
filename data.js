@@ -1,9 +1,7 @@
 /**
- * Default team roster. Admin edits are saved in the browser (localStorage).
- * Admin password is checked in the app — only admins can add/remove departments & names.
+ * Default team roster. Admin edits sync through Firebase.
  */
 window.DAYLINE_TEAM = {
-  adminPassword: "Mar@#123",
   departments: [
     {
       id: "testers",

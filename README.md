@@ -6,7 +6,7 @@ Website for the team to log daily work by department — same structure as the W
 
 After you push this repo and enable Pages, the site will be at:
 
-`https://<your-github-username>.github.io/fatakpay-dayline/`
+`https://fatakpay-development.github.io/fatakpay-daily-update-tracker/`
 
 ## Shared updates (required)
 
@@ -26,7 +26,7 @@ Until Firebase is configured, the site shows a warning and will not accept share
 2. Select **Department** → **Your name**
 3. Write tasks **one per line** → **Submit update**
 4. Use **Copy for WhatsApp** to paste the day’s summary into the group
-5. **Admin** (password in `data.js`) can add/remove departments and names
+5. **Admin** (top-right) can add/remove departments and names after entering the admin password
 
 ## Local preview
 
