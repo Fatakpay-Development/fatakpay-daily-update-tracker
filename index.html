@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260903-secure" />
+  <link rel="stylesheet" href="styles.css?v=20260903-missing3" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -26,10 +26,16 @@
       </div>
     </div>
     <div class="topbar-right">
-      <label class="date-picker">
-        <span>View date</span>
-        <input type="date" id="viewDate" />
-      </label>
+      <div class="day-nav">
+        <button type="button" id="prevDayBtn" class="btn-ghost btn-sm" aria-label="Previous day">‹</button>
+        <label class="date-picker">
+          <span>View date</span>
+          <input type="date" id="viewDate" />
+        </label>
+        <button type="button" id="nextDayBtn" class="btn-ghost btn-sm" aria-label="Next day">›</button>
+        <button type="button" id="yesterdayBtn" class="btn-ghost btn-sm">Yesterday</button>
+        <button type="button" id="todayBtn" class="btn-ghost btn-sm">Today</button>
+      </div>
       <button type="button" id="adminToggleBtn" class="btn-ghost">Admin</button>
     </div>
   </header>
@@ -92,6 +98,7 @@
         <div>
           <h2 id="board-title">Department boards</h2>
           <p id="boardMeta" class="board-meta"></p>
+          <p class="field-note">Today shows only people who have submitted. From yesterday and older dates, missing people appear in red as NO STATUS UPDATED. That rolls forward each day. Red names are on-screen only — not copied to WhatsApp or Excel.</p>
         </div>
         <div class="board-actions">
           <button type="button" id="copyWhatsAppBtn" class="btn-ghost">Copy for WhatsApp</button>
@@ -106,7 +113,7 @@
       <div class="admin-panel-head">
         <div>
           <h2>Admin — manage team</h2>
-          <p class="board-meta">Add or remove departments and names. Download a date-range Excel report. Regular users can only submit updates.</p>
+          <p class="board-meta">Add or remove departments and names. Track WFH days. Download a date-range Excel report. Regular users can only submit updates.</p>
         </div>
         <button type="button" id="adminLogoutBtn" class="btn-ghost">Log out</button>
       </div>
@@ -114,7 +121,7 @@
       <div class="admin-grid">
         <form id="reportForm" class="admin-card">
           <h3>Download Excel report</h3>
-          <p class="field-note">Admins only. Pick a date range. Missing employee updates are filled as “No update received today”.</p>
+          <p class="field-note">Admins only. Pick a date range. Only submitted updates are exported — missing people stay on the board highlight, not in the sheet.</p>
           <div class="field">
             <label for="reportStart">Start date</label>
             <input type="date" id="reportStart" required />
@@ -171,6 +178,40 @@
         </form>
       </div>
 
+      <section id="wfhTracker" class="wfh-tracker" aria-labelledby="wfh-title">
+        <div class="wfh-head">
+          <div>
+            <h3 id="wfh-title">Daily WFH tracker</h3>
+            <p class="field-note">Admin only. Click a date on someone’s calendar to mark or unmark WFH, then copy a shareable list.</p>
+          </div>
+        </div>
+
+        <div class="wfh-toolbar">
+          <div class="wfh-month-nav">
+            <button type="button" id="wfhPrevMonth" class="btn-ghost btn-sm" aria-label="Previous month">‹</button>
+            <label class="date-picker">
+              <span>Month</span>
+              <input type="month" id="wfhMonth" />
+            </label>
+            <button type="button" id="wfhNextMonth" class="btn-ghost btn-sm" aria-label="Next month">›</button>
+          </div>
+          <label class="date-picker">
+            <span>Department</span>
+            <select id="wfhFilterDept">
+              <option value="">All departments</option>
+            </select>
+          </label>
+          <label class="date-picker wfh-note-field">
+            <span>Note for next mark (optional)</span>
+            <input type="text" id="wfhNote" maxlength="120" placeholder="e.g. Half day, city travel" />
+          </label>
+          <button type="button" id="wfhCopyAllBtn" class="btn-ghost">Copy all WFH lists</button>
+        </div>
+        <p class="wfh-legend field-note">Filled date = WFH. Click again to remove. Outline = today.</p>
+        <p id="wfhShareStatus" class="form-status" role="status"></p>
+        <div id="wfhPeopleGrid" class="wfh-people-grid"></div>
+      </section>
+
       <div id="adminRoster" class="admin-roster"></div>
     </div>
   </section>
@@ -186,7 +227,7 @@
   <dialog id="adminLoginDialog" class="admin-dialog">
     <form id="adminLoginForm" method="dialog" class="admin-login">
       <h2>Admin login</h2>
-      <p>Enter the admin password to manage departments and names.</p>
+      <p>Enter the admin password to manage the team and the Daily WFH tracker.</p>
       <div class="field">
         <label for="adminPassword">Password</label>
         <input type="password" id="adminPassword" autocomplete="current-password" required />
@@ -203,8 +244,8 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="firebase-config.js?v=20260903-secure"></script>
-  <script src="data.js?v=20260903-secure"></script>
-  <script src="app.js?v=20260903-secure"></script>
+  <script src="firebase-config.js?v=20260903-missing3"></script>
+  <script src="data.js?v=20260903-missing3"></script>
+  <script src="app.js?v=20260903-missing3"></script>
 </body>
 </html>

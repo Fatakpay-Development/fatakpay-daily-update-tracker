@@ -36,6 +36,10 @@
       "settings": {
         ".read": true,
         ".write": "auth != null && auth.token.email == 'dayline-admin@fatakpay.com'"
+      },
+      "wfh": {
+        ".read": "auth != null && auth.token.email == 'dayline-admin@fatakpay.com'",
+        ".write": "auth != null && auth.token.email == 'dayline-admin@fatakpay.com'"
       }
     }
   }

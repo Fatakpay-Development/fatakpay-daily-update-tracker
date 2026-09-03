@@ -18,11 +18,16 @@
   let teamRef = null;
   let settingsRef = null;
   let claimsDayRef = null;
+  let wfhRef = null;
   let updatesCache = [];
   let claimsCache = {}; // { [deptId]: { [safeMember]: { token, memberName, ... } } }
+  let wfhCache = {}; // { [deptId]: { [safeMember]: { [date]: record } } }
+  let wfhListening = false;
+  let wfhInFlight = false;
   let team = cloneDefaults();
   let settings = { cutoffEnabled: false, cutoffTime: "19:00" };
   let isAdmin = false;
+  let adminUnlocked = false;
   let submitInFlight = false;
 
   const els = {
@@ -36,6 +41,10 @@
     status: document.getElementById("formStatus"),
     charCount: document.getElementById("charCount"),
     viewDate: document.getElementById("viewDate"),
+    prevDayBtn: document.getElementById("prevDayBtn"),
+    nextDayBtn: document.getElementById("nextDayBtn"),
+    yesterdayBtn: document.getElementById("yesterdayBtn"),
+    todayBtn: document.getElementById("todayBtn"),
     boards: document.getElementById("departmentBoards"),
     boardMeta: document.getElementById("boardMeta"),
     exportBtn: document.getElementById("exportBtn"),
@@ -69,6 +78,15 @@
     reportStart: document.getElementById("reportStart"),
     reportEnd: document.getElementById("reportEnd"),
     adminReportStatus: document.getElementById("adminReportStatus"),
+    wfhTracker: document.getElementById("wfhTracker"),
+    wfhNote: document.getElementById("wfhNote"),
+    wfhMonth: document.getElementById("wfhMonth"),
+    wfhPrevMonth: document.getElementById("wfhPrevMonth"),
+    wfhNextMonth: document.getElementById("wfhNextMonth"),
+    wfhFilterDept: document.getElementById("wfhFilterDept"),
+    wfhCopyAllBtn: document.getElementById("wfhCopyAllBtn"),
+    wfhShareStatus: document.getElementById("wfhShareStatus"),
+    wfhPeopleGrid: document.getElementById("wfhPeopleGrid"),
   };
 
   function getIndiaParts() {
@@ -91,6 +109,57 @@
 
   function todayISO() {
     return getIndiaParts().date;
+  }
+
+  function addDaysISO(isoDate, delta) {
+    const m = String(isoDate || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    const base = m ? `${m[1]}-${m[2]}-${m[3]}` : todayISO();
+    const parts = base.split("-").map(Number);
+    const dt = new Date(parts[0], parts[1] - 1, parts[2] + Number(delta || 0));
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+  }
+
+  function currentViewDate() {
+    return (els.viewDate && els.viewDate.value) || todayISO();
+  }
+
+  function setViewDate(isoDate) {
+    if (!els.viewDate) return;
+    els.viewDate.value = isoDate;
+    renderBoards();
+  }
+
+  function sameName(a, b) {
+    return String(a || "").trim().toLowerCase() === String(b || "").trim().toLowerCase();
+  }
+
+  function personOnDay(members, name) {
+    if (!members) return null;
+    if (members.has(name)) return members.get(name);
+    for (const [key, person] of members) {
+      if (sameName(key, name)) return person;
+    }
+    return null;
+  }
+
+  function expectedNamesForDept(dept, viewDate) {
+    const names = [];
+    const seen = new Set();
+    const add = (name) => {
+      const trimmed = String(name || "").trim();
+      if (!trimmed) return;
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      names.push(trimmed);
+    };
+    (dept.members || []).forEach(add);
+    const windowStart = addDaysISO(viewDate, -14);
+    loadUpdates().forEach((u) => {
+      if (u.departmentId !== dept.id || !u.memberName || !u.date) return;
+      if (u.date >= windowStart && u.date <= viewDate) add(u.memberName);
+    });
+    return names;
   }
 
   function minutesNow() {
@@ -330,17 +399,20 @@
 
     try {
       firebase.initializeApp(firebaseConfig);
-      auth = firebase.auth();
-      auth.setPersistence(firebase.auth.Auth.Persistence.SESSION);
-      auth.onAuthStateChanged((user) => {
-        isAdmin = Boolean(user && user.email === ADMIN_EMAIL);
-        setAdminUi({ scroll: false });
-      });
       db = firebase.database();
       updatesRef = db.ref("dayline/updates");
       teamRef = db.ref("dayline/team");
       settingsRef = db.ref("dayline/settings");
       claimsDayRef = db.ref(`dayline/claims/${todayISO()}`);
+      auth = firebase.auth();
+      auth.setPersistence(firebase.auth.Auth.Persistence.NONE);
+      auth.onAuthStateChanged((user) => {
+        const signedIn = Boolean(user && user.email === ADMIN_EMAIL);
+        if (!signedIn) adminUnlocked = false;
+        isAdmin = Boolean(signedIn && adminUnlocked);
+        setAdminUi({ scroll: false });
+      });
+      auth.signOut().catch(() => {});
 
       updatesRef.on("value", (snap) => {
         const val = snap.val() || {};
@@ -556,6 +628,309 @@
     });
     if (selected && findDept(selected)) {
       els.adminDeptSelect.value = selected;
+    }
+  }
+
+  function fillDeptOptions(selectEl, emptyLabel) {
+    if (!selectEl) return;
+    const selected = selectEl.value;
+    selectEl.innerHTML = `<option value="">${emptyLabel}</option>`;
+    team.departments.forEach((dept) => {
+      const opt = document.createElement("option");
+      opt.value = dept.id;
+      opt.textContent = dept.name;
+      selectEl.appendChild(opt);
+    });
+    if (selected && findDept(selected)) {
+      selectEl.value = selected;
+    }
+  }
+
+  function fillWfhSelects() {
+    fillDeptOptions(els.wfhFilterDept, "All departments");
+  }
+
+  function initWfhControls() {
+    if (els.wfhMonth && !els.wfhMonth.value) els.wfhMonth.value = todayISO().slice(0, 7);
+  }
+
+  function shiftWfhMonth(delta) {
+    const ym = currentWfhMonth();
+    const m = String(ym).match(/^(\d{4})-(\d{2})$/);
+    if (!m || !els.wfhMonth) return;
+    const next = new Date(Number(m[1]), Number(m[2]) - 1 + delta, 1);
+    els.wfhMonth.value = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+    renderWfhGrid();
+    if (els.wfhShareStatus) setStatus(els.wfhShareStatus, "");
+  }
+
+  function currentWfhMonth() {
+    return (els.wfhMonth && els.wfhMonth.value) || todayISO().slice(0, 7);
+  }
+
+  function formatMonthLabel(ym) {
+    const m = String(ym || "").match(/^(\d{4})-(\d{2})$/);
+    if (!m) return ym || "";
+    return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleDateString("en-IN", {
+      month: "long",
+      year: "numeric",
+    });
+  }
+
+  function formatShareDate(isoDate) {
+    const m = String(isoDate || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (!m) return isoDate || "";
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString("en-GB", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  }
+
+  function wfhPath(departmentId, memberName, date) {
+    return `dayline/wfh/${departmentId}/${safeFirebaseKey(memberName)}/${date}`;
+  }
+
+  function getWfhRecords(departmentId, memberName) {
+    const node =
+      (wfhCache[departmentId] && wfhCache[departmentId][safeFirebaseKey(memberName)]) || {};
+    return Object.keys(node)
+      .map((key) => node[key])
+      .filter((row) => row && row.date)
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }
+
+  function getWfhOnDate(departmentId, memberName, date) {
+    return getWfhRecords(departmentId, memberName).find((row) => row.date === date) || null;
+  }
+
+  function attachWfhListener() {
+    if (!db || !isAdmin || wfhListening) return;
+    wfhRef = db.ref("dayline/wfh");
+    wfhRef.on(
+      "value",
+      (snap) => {
+        wfhCache = snap.val() || {};
+        renderWfhGrid();
+      },
+      (err) => {
+        console.error(err);
+        if (els.wfhShareStatus) {
+          setStatus(els.wfhShareStatus, "Could not load WFH records. Sign in as admin and try again.", true);
+        }
+      }
+    );
+    wfhListening = true;
+  }
+
+  function detachWfhListener() {
+    if (wfhRef && wfhListening) {
+      wfhRef.off("value");
+    }
+    wfhListening = false;
+    wfhCache = {};
+    if (els.wfhPeopleGrid) els.wfhPeopleGrid.innerHTML = "";
+  }
+
+  async function saveWfhDay({ departmentId, memberName, date, note }) {
+    const dept = findDept(departmentId);
+    if (!dept) throw new Error("Unknown department.");
+    if (!dept.members.includes(memberName)) throw new Error("Name is not on this department roster.");
+    const record = {
+      date,
+      departmentId,
+      departmentName: dept.name,
+      memberName,
+      note: String(note || "").trim(),
+      updatedAt: new Date().toISOString(),
+    };
+    if (cloudEnabled && db) {
+      await db.ref(wfhPath(departmentId, memberName, date)).set(record);
+      return;
+    }
+    const memberKey = safeFirebaseKey(memberName);
+    if (!wfhCache[departmentId]) wfhCache[departmentId] = {};
+    if (!wfhCache[departmentId][memberKey]) wfhCache[departmentId][memberKey] = {};
+    wfhCache[departmentId][memberKey][date] = record;
+    renderWfhGrid();
+  }
+
+  async function removeWfhDay(departmentId, memberName, date) {
+    if (cloudEnabled && db) {
+      await db.ref(wfhPath(departmentId, memberName, date)).remove();
+      return;
+    }
+    const memberKey = safeFirebaseKey(memberName);
+    if (wfhCache[departmentId] && wfhCache[departmentId][memberKey]) {
+      delete wfhCache[departmentId][memberKey][date];
+    }
+    renderWfhGrid();
+  }
+
+  function buildPersonWfhText(dept, memberName, monthYm) {
+    const all = getWfhRecords(dept.id, memberName);
+    const monthRows = monthYm ? all.filter((row) => String(row.date).startsWith(monthYm)) : all;
+    const lines = [`WFH — ${memberName} (${dept.name})`];
+    if (monthYm) {
+      lines.push(formatMonthLabel(monthYm));
+      if (monthRows.length === 0) {
+        lines.push("No WFH days this month.");
+      } else {
+        monthRows.forEach((row) => {
+          lines.push(row.note ? `• ${formatShareDate(row.date)} — ${row.note}` : `• ${formatShareDate(row.date)}`);
+        });
+        lines.push(`This month: ${monthRows.length} day${monthRows.length === 1 ? "" : "s"}`);
+      }
+      const older = all.filter((row) => !String(row.date).startsWith(monthYm));
+      if (older.length) {
+        lines.push("");
+        lines.push("All other WFH days");
+        older.forEach((row) => {
+          lines.push(row.note ? `• ${formatShareDate(row.date)} — ${row.note}` : `• ${formatShareDate(row.date)}`);
+        });
+        lines.push(`All time: ${all.length} day${all.length === 1 ? "" : "s"}`);
+      }
+    } else {
+      if (all.length === 0) {
+        lines.push("No WFH days recorded.");
+      } else {
+        all.forEach((row) => {
+          lines.push(row.note ? `• ${formatShareDate(row.date)} — ${row.note}` : `• ${formatShareDate(row.date)}`);
+        });
+        lines.push(`Total: ${all.length} day${all.length === 1 ? "" : "s"}`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  function buildAllWfhText(monthYm) {
+    const filterDept = els.wfhFilterDept && els.wfhFilterDept.value;
+    const depts = team.departments.filter((d) => !filterDept || d.id === filterDept);
+    const blocks = [];
+    depts.forEach((dept) => {
+      const people = [];
+      dept.members.forEach((name) => {
+        const monthRows = getWfhRecords(dept.id, name).filter((row) => String(row.date).startsWith(monthYm));
+        if (monthRows.length === 0) return;
+        const lines = [`${name}`];
+        monthRows.forEach((row) => {
+          lines.push(row.note ? `• ${formatShareDate(row.date)} — ${row.note}` : `• ${formatShareDate(row.date)}`);
+        });
+        lines.push(`${monthRows.length} day${monthRows.length === 1 ? "" : "s"}`);
+        people.push(lines.join("\n"));
+      });
+      if (people.length) {
+        blocks.push(`${dept.name}\n${people.join("\n\n")}`);
+      }
+    });
+    if (blocks.length === 0) {
+      return `WFH tracker — ${formatMonthLabel(monthYm)}\nNo WFH days marked this month.`;
+    }
+    return `WFH tracker — ${formatMonthLabel(monthYm)}\n\n${blocks.join("\n\n")}`;
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    }
+  }
+
+  function renderWfhCalendar(dept, memberName, monthYm) {
+    const m = String(monthYm || "").match(/^(\d{4})-(\d{2})$/);
+    if (!m) return "";
+    const year = Number(m[1]);
+    const month = Number(m[2]);
+    const dim = new Date(year, month, 0).getDate();
+    const firstMon0 = (new Date(year, month - 1, 1).getDay() + 6) % 7;
+    const today = todayISO();
+    const marked = new Set(
+      getWfhRecords(dept.id, memberName)
+        .filter((row) => String(row.date).startsWith(monthYm))
+        .map((row) => row.date)
+    );
+
+    const weekdays = ["M", "T", "W", "T", "F", "S", "S"]
+      .map((d) => `<span>${d}</span>`)
+      .join("");
+    const cells = [];
+    for (let i = 0; i < firstMon0; i += 1) {
+      cells.push('<button type="button" class="wfh-cal-day" disabled></button>');
+    }
+    for (let day = 1; day <= dim; day += 1) {
+      const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const weekday = (firstMon0 + day - 1) % 7;
+      const classes = ["wfh-cal-day"];
+      if (weekday >= 5) classes.push("is-weekend");
+      if (iso === today) classes.push("is-today");
+      if (marked.has(iso)) classes.push("is-wfh");
+      cells.push(
+        `<button type="button" class="${classes.join(" ")}" data-action="toggle-wfh" data-dept="${escapeHtml(dept.id)}" data-name="${escapeHtml(memberName)}" data-date="${iso}" aria-label="${marked.has(iso) ? "Remove WFH" : "Mark WFH"} ${iso}">${day}</button>`
+      );
+    }
+
+    return `<div class="wfh-cal"><div class="wfh-cal-weekdays">${weekdays}</div><div class="wfh-cal-days">${cells.join("")}</div></div>`;
+  }
+
+  function renderWfhGrid() {
+    if (!els.wfhPeopleGrid) return;
+    if (!isAdmin) {
+      els.wfhPeopleGrid.innerHTML = "";
+      return;
+    }
+
+    const monthYm = currentWfhMonth();
+    const filterDept = els.wfhFilterDept && els.wfhFilterDept.value;
+    const depts = team.departments.filter((d) => !filterDept || d.id === filterDept);
+    els.wfhPeopleGrid.innerHTML = "";
+
+    if (depts.length === 0) {
+      els.wfhPeopleGrid.innerHTML = '<p class="empty-state">No departments to show.</p>';
+      return;
+    }
+
+    depts.forEach((dept) => {
+      if (dept.members.length === 0) return;
+      dept.members.forEach((name) => {
+        const all = getWfhRecords(dept.id, name);
+        const monthRows = all.filter((row) => String(row.date).startsWith(monthYm));
+        const card = document.createElement("article");
+        card.className = "wfh-person-card";
+        card.style.setProperty("--dept-accent", dept.accent);
+        card.innerHTML = `
+          <div class="wfh-person-head">
+            <div>
+              <h4>${escapeHtml(name)}</h4>
+              <p class="wfh-person-meta">${escapeHtml(dept.name)} · ${monthRows.length} this month · ${all.length} total</p>
+            </div>
+            <button type="button" class="btn-ghost btn-sm" data-action="copy-wfh" data-dept="${escapeHtml(dept.id)}" data-name="${escapeHtml(name)}">Copy list</button>
+          </div>
+          ${renderWfhCalendar(dept, name, monthYm)}
+          ${
+            monthRows.length
+              ? `<ul class="wfh-dates">${monthRows
+                  .map(
+                    (row) =>
+                      `<li><span>${escapeHtml(formatShareDate(row.date))}${
+                        row.note ? ` <span class="wfh-date-note">— ${escapeHtml(row.note)}</span>` : ""
+                      }</span></li>`
+                  )
+                  .join("")}</ul>`
+              : `<p class="wfh-empty">Click a date to mark WFH.</p>`
+          }
+        `;
+        els.wfhPeopleGrid.appendChild(card);
+      });
+    });
+
+    if (!els.wfhPeopleGrid.children.length) {
+      els.wfhPeopleGrid.innerHTML = '<p class="empty-state">No names in this department yet.</p>';
     }
   }
 
@@ -825,7 +1200,7 @@
       throw new Error("Please choose a range of 93 days or less.");
     }
     const allUpdates = loadUpdates();
-    const wb = buildExcelWorkbook(allUpdates, { dates, fillMissing: true });
+    const wb = buildExcelWorkbook(allUpdates, { dates, fillMissing: false });
     const fileName = `Daily-update-${formatDateDisplay(startISO)}-to-${formatDateDisplay(endISO)}.xlsx`;
     XLSX.writeFile(wb, fileName);
   }
@@ -924,87 +1299,131 @@
   }
 
   function renderBoards() {
-    const date = els.viewDate.value || todayISO();
+    const date = currentViewDate();
     const dayUpdates = getDayUpdates(date);
     const grouped = groupByDeptAndMember(dayUpdates);
-    let personCount = 0;
+    const showMissing = date < todayISO();
+    let updatedCount = 0;
+    let missingCount = 0;
     let taskCount = 0;
+    if (els.nextDayBtn) els.nextDayBtn.disabled = date >= todayISO();
 
-    grouped.forEach((members) => {
-      personCount += members.size;
-      members.forEach((p) => {
-        taskCount += p.tasks.length;
+    team.departments.forEach((dept) => {
+      const members = grouped.get(dept.id);
+      const names = expectedNamesForDept(dept, date);
+      names.forEach((name) => {
+        const person = personOnDay(members, name);
+        if (person) {
+          updatedCount += 1;
+          taskCount += person.tasks.length;
+        } else if (showMissing) {
+          missingCount += 1;
+        }
       });
+      if (members) {
+        members.forEach((person, name) => {
+          if (names.some((n) => sameName(n, name))) return;
+          updatedCount += 1;
+          taskCount += person.tasks.length;
+        });
+      }
     });
 
+    const missingLabel =
+      showMissing && missingCount > 0 ? ` · ${missingCount} no status` : "";
+    const dayLabel = date === todayISO() ? "today" : date === addDaysISO(todayISO(), -1) ? "yesterday" : formatShareDate(date);
     els.boardMeta.textContent =
-      `${personCount} people · ${taskCount} task${taskCount === 1 ? "" : "s"} · ${date}`;
+      `${updatedCount} updated${missingLabel} · ${taskCount} task${taskCount === 1 ? "" : "s"} · ${dayLabel} (${date})`;
+    if (document.getElementById("board-title")) {
+      document.getElementById("board-title").textContent = `Department boards — ${dayLabel}`;
+    }
     els.boards.innerHTML = "";
 
     team.departments.forEach((dept, index) => {
       const members = grouped.get(dept.id);
+      const expected = expectedNamesForDept(dept, date);
+      const extras = members
+        ? [...members.keys()].filter((name) => !expected.some((n) => sameName(n, name)))
+        : [];
+      const names = [...expected, ...extras];
+      const updatedInDept = names.filter((name) => personOnDay(members, name)).length;
+      const missingInDept = showMissing ? names.length - updatedInDept : 0;
+
       const panel = document.createElement("article");
       panel.className = "dept-panel";
       panel.style.setProperty("--dept-accent", dept.accent);
       panel.style.animationDelay = `${index * 0.04}s`;
 
-      const memberCount = members ? members.size : 0;
+      const countBits = [`${updatedInDept} update${updatedInDept === 1 ? "" : "s"}`];
+      if (missingInDept > 0) {
+        countBits.push(`${missingInDept} no status`);
+      }
       const head = document.createElement("div");
       head.className = "dept-panel-head";
       head.innerHTML = `
         <h3><span class="dept-dot" aria-hidden="true"></span>${escapeHtml(dept.name)}</h3>
-        <span class="dept-count">${memberCount} update${memberCount === 1 ? "" : "s"}</span>
+        <span class="dept-count">${countBits.join(" · ")}</span>
       `;
       panel.appendChild(head);
 
-      if (!members || members.size === 0) {
+      if (names.length === 0 || (!showMissing && updatedInDept === 0)) {
         const empty = document.createElement("p");
         empty.className = "empty-state";
-        empty.textContent = "No updates yet for this department.";
+        empty.textContent =
+          names.length === 0
+            ? "No names in this department yet."
+            : "No updates yet for this department.";
         panel.appendChild(empty);
-      } else {
-        const wrap = document.createElement("div");
-        wrap.className = "dept-people";
-
-        const order = dept.members.length
-          ? [
-              ...dept.members.filter((n) => members.has(n)),
-              ...[...members.keys()].filter((n) => !dept.members.includes(n)),
-            ]
-          : [...members.keys()];
-
-        order.forEach((name) => {
-          const person = members.get(name);
-          if (!person) return;
-          const block = document.createElement("div");
-          block.className = person.onLeave ? "person-block is-leave" : "person-block";
-          let bodyHtml;
-          if (person.onLeave) {
-            bodyHtml = `<p class="leave-mark" role="status"><strong>Leave</strong></p>`;
-          } else {
-            const tasksHtml = person.tasks
-              .map(
-                (t, i) =>
-                  `<li><span class="task-num">${i + 1}.</span> <span class="task-body">${escapeHtml(t)}</span></li>`
-              )
-              .join("");
-            bodyHtml = `<ol class="task-list">${tasksHtml}</ol>`;
-          }
-          block.innerHTML = `
-            <div class="person-head">
-              <span class="update-name">${escapeHtml(person.memberName)}${
-                person.onLeave ? ' <span class="leave-badge">Leave</span>' : ""
-              }</span>
-              <span class="update-time">${escapeHtml(formatTime(person.lastAt))}</span>
-            </div>
-            ${bodyHtml}
-          `;
-          wrap.appendChild(block);
-        });
-
-        panel.appendChild(wrap);
+        els.boards.appendChild(panel);
+        return;
       }
 
+      const wrap = document.createElement("div");
+      wrap.className = "dept-people";
+
+      names.forEach((name) => {
+        const person = personOnDay(members, name);
+        const block = document.createElement("div");
+
+        if (!person) {
+          if (!showMissing) return;
+          block.className = "person-block is-missing";
+          block.innerHTML = `
+            <div class="person-head">
+              <span class="update-name">${escapeHtml(name)}</span>
+            </div>
+            <p class="missing-mark" role="status">NO STATUS UPDATED</p>
+          `;
+          wrap.appendChild(block);
+          return;
+        }
+
+        block.className = person.onLeave ? "person-block is-leave" : "person-block";
+        let bodyHtml;
+        if (person.onLeave) {
+          bodyHtml = `<p class="leave-mark" role="status"><strong>Leave</strong></p>`;
+        } else {
+          const tasksHtml = person.tasks
+            .map(
+              (t, i) =>
+                `<li><span class="task-num">${i + 1}.</span> <span class="task-body">${escapeHtml(t)}</span></li>`
+            )
+            .join("");
+          bodyHtml = `<ol class="task-list">${tasksHtml}</ol>`;
+        }
+        block.innerHTML = `
+          <div class="person-head">
+            <span class="update-name">${escapeHtml(person.memberName)}${
+              person.onLeave ? ' <span class="leave-badge">Leave</span>' : ""
+            }</span>
+            <span class="update-time">${escapeHtml(formatTime(person.lastAt))}</span>
+          </div>
+          ${bodyHtml}
+        `;
+        wrap.appendChild(block);
+      });
+
+      panel.appendChild(wrap);
       els.boards.appendChild(panel);
     });
   }
@@ -1022,7 +1441,12 @@
     fillAdminDeptSelect();
     renderBoards();
     applyIdentityLock();
-    if (isAdmin) renderAdminRoster();
+    if (isAdmin) {
+      attachWfhListener();
+      fillWfhSelects();
+      renderAdminRoster();
+      renderWfhGrid();
+    }
   }
 
   function renderAdminRoster() {
@@ -1069,14 +1493,23 @@
     });
   }
 
+  function isSignedInAdmin() {
+    return Boolean(auth && auth.currentUser && auth.currentUser.email === ADMIN_EMAIL);
+  }
+
   function setAdminUi(opts = {}) {
+    isAdmin = Boolean(adminUnlocked && isSignedInAdmin());
     els.adminPanel.hidden = !isAdmin;
     els.adminToggleBtn.textContent = isAdmin ? "Admin panel" : "Admin";
     els.adminToggleBtn.classList.toggle("is-active", isAdmin);
     applyIdentityLock();
     if (isAdmin) {
       fillAdminDeptSelect();
+      initWfhControls();
+      fillWfhSelects();
+      attachWfhListener();
       renderAdminRoster();
+      renderWfhGrid();
       if (els.cutoffTime) els.cutoffTime.value = settings.cutoffTime || "19:00";
       if (els.cutoffEnabled) els.cutoffEnabled.checked = Boolean(settings.cutoffEnabled);
       if (els.reportStart && !els.reportStart.value) els.reportStart.value = todayISO();
@@ -1084,13 +1517,15 @@
       if (opts.scroll !== false) {
         els.adminPanel.scrollIntoView({ behavior: "smooth", block: "start" });
       }
+    } else {
+      detachWfhListener();
     }
   }
 
   function requireAdmin() {
-    const signedIn = Boolean(auth && auth.currentUser && auth.currentUser.email === ADMIN_EMAIL);
-    isAdmin = signedIn;
-    if (!signedIn) {
+    isAdmin = Boolean(adminUnlocked && isSignedInAdmin());
+    if (!isAdmin) {
+      adminUnlocked = false;
       alert("Admin login required.");
       setAdminUi({ scroll: false });
       return false;
@@ -1160,6 +1595,32 @@
   }
 
   els.viewDate.addEventListener("change", renderBoards);
+
+  if (els.prevDayBtn) {
+    els.prevDayBtn.addEventListener("click", () => {
+      setViewDate(addDaysISO(currentViewDate(), -1));
+    });
+  }
+
+  if (els.nextDayBtn) {
+    els.nextDayBtn.addEventListener("click", () => {
+      const next = addDaysISO(currentViewDate(), 1);
+      if (next > todayISO()) return;
+      setViewDate(next);
+    });
+  }
+
+  if (els.yesterdayBtn) {
+    els.yesterdayBtn.addEventListener("click", () => {
+      setViewDate(addDaysISO(todayISO(), -1));
+    });
+  }
+
+  if (els.todayBtn) {
+    els.todayBtn.addEventListener("click", () => {
+      setViewDate(todayISO());
+    });
+  }
 
   els.form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1295,7 +1756,7 @@
   });
 
   els.adminToggleBtn.addEventListener("click", () => {
-    if (isAdmin) {
+    if (adminUnlocked && isSignedInAdmin()) {
       els.adminPanel.hidden = false;
       els.adminPanel.scrollIntoView({ behavior: "smooth", block: "start" });
       return;
@@ -1326,10 +1787,11 @@
     if (submitBtn) submitBtn.disabled = true;
     try {
       await auth.signInWithEmailAndPassword(ADMIN_EMAIL, entered);
+      adminUnlocked = true;
       els.adminPassword.value = "";
       els.adminLoginDialog.close();
       setAdminUi();
-      setFormStatus("Admin unlocked. You can manage the team, cutoff time, and submit for anyone.");
+      setFormStatus("Admin unlocked. You can manage the team, WFH tracker, cutoff time, and submit for anyone.");
     } catch (err) {
       console.error(err);
       els.adminLoginError.textContent = "Incorrect password.";
@@ -1344,6 +1806,7 @@
     } catch (err) {
       console.error(err);
     }
+    adminUnlocked = false;
     isAdmin = false;
     setAdminUi({ scroll: false });
     setFormStatus("Admin logged out.");
@@ -1363,7 +1826,7 @@
         downloadRangeExcel(startISO, endISO);
         setStatus(
           els.adminReportStatus,
-          `Excel downloaded for ${formatDateDisplay(startISO)} to ${formatDateDisplay(endISO)}. Missing updates are marked “No update received today”.`
+          `Excel downloaded for ${formatDateDisplay(startISO)} to ${formatDateDisplay(endISO)}. Only submitted updates are included.`
         );
       } catch (err) {
         console.error(err);
@@ -1403,6 +1866,93 @@
       setStatus(els.adminCutoffStatus, "Could not save cutoff.", true);
     }
   });
+
+  if (els.wfhMonth) {
+    els.wfhMonth.addEventListener("change", () => {
+      renderWfhGrid();
+      if (els.wfhShareStatus) setStatus(els.wfhShareStatus, "");
+    });
+  }
+
+  if (els.wfhPrevMonth) {
+    els.wfhPrevMonth.addEventListener("click", () => shiftWfhMonth(-1));
+  }
+
+  if (els.wfhNextMonth) {
+    els.wfhNextMonth.addEventListener("click", () => shiftWfhMonth(1));
+  }
+
+  if (els.wfhFilterDept) {
+    els.wfhFilterDept.addEventListener("change", () => {
+      renderWfhGrid();
+      if (els.wfhShareStatus) setStatus(els.wfhShareStatus, "");
+    });
+  }
+
+  if (els.wfhCopyAllBtn) {
+    els.wfhCopyAllBtn.addEventListener("click", async () => {
+      if (!requireAdmin()) return;
+      const text = buildAllWfhText(currentWfhMonth());
+      try {
+        await copyText(text);
+        setStatus(els.wfhShareStatus, "Copied all WFH lists for this month.");
+      } catch (err) {
+        console.error(err);
+        setStatus(els.wfhShareStatus, "Could not copy the list.", true);
+      }
+    });
+  }
+
+  if (els.wfhPeopleGrid) {
+    els.wfhPeopleGrid.addEventListener("click", async (event) => {
+      const btn = event.target.closest("button[data-action]");
+      if (!btn || !requireAdmin()) return;
+      const action = btn.getAttribute("data-action");
+      const departmentId = btn.getAttribute("data-dept");
+      const memberName = btn.getAttribute("data-name");
+      const date = btn.getAttribute("data-date");
+      const dept = findDept(departmentId);
+      if (!dept || !memberName) return;
+
+      if (action === "copy-wfh") {
+        try {
+          await copyText(buildPersonWfhText(dept, memberName, currentWfhMonth()));
+          setStatus(els.wfhShareStatus, `Copied WFH list for ${memberName}.`);
+        } catch (err) {
+          console.error(err);
+          setStatus(els.wfhShareStatus, "Could not copy the list.", true);
+        }
+        return;
+      }
+
+      if (action === "toggle-wfh") {
+        if (!requireCloudForShare()) return;
+        if (wfhInFlight) return;
+        wfhInFlight = true;
+        try {
+          const existing = getWfhOnDate(departmentId, memberName, date);
+          if (existing) {
+            await removeWfhDay(departmentId, memberName, date);
+            setStatus(els.wfhShareStatus, `Removed WFH for ${memberName} on ${formatShareDate(date)}.`);
+          } else {
+            await saveWfhDay({
+              departmentId,
+              memberName,
+              date,
+              note: els.wfhNote ? els.wfhNote.value.trim() : "",
+            });
+            setStatus(els.wfhShareStatus, `Marked WFH for ${memberName} on ${formatShareDate(date)}.`);
+          }
+          renderWfhGrid();
+        } catch (err) {
+          console.error(err);
+          setStatus(els.wfhShareStatus, "Could not update that WFH day.", true);
+        } finally {
+          wfhInFlight = false;
+        }
+      }
+    });
+  }
 
   els.addDeptForm.addEventListener("submit", async (event) => {
     event.preventDefault();
