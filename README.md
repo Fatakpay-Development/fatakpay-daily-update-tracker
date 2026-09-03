@@ -15,8 +15,11 @@ GitHub Pages only hosts the website. To make **everyone see the same board**, co
 1. Open [Firebase Console](https://console.firebase.google.com/) → Create project
 2. **Build → Realtime Database → Create** → start in **test mode**
 3. Project settings → Add web app → copy `firebaseConfig`
-4. Paste values into `firebase-config.js`
-5. Commit and push
+4. Copy `.env.example` to `.env` and paste the values there
+5. Run `node scripts/generate-firebase-config.js` for local preview
+6. Add the same keys as GitHub Actions secrets (never commit `.env` or `firebase-config.js`)
+
+GitHub Actions builds `firebase-config.js` on deploy from those secrets. The live site still needs the config in the browser; it is just no longer stored in the repo.
 
 Until Firebase is configured, the site shows a warning and will not accept shared submits.
 
