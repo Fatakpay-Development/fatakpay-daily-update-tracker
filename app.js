@@ -29,6 +29,7 @@
   let isAdmin = false;
   let adminUnlocked = false;
   let submitInFlight = false;
+  let memberDetail = null;
 
   const els = {
     department: document.getElementById("department"),
@@ -87,6 +88,19 @@
     wfhCopyAllBtn: document.getElementById("wfhCopyAllBtn"),
     wfhShareStatus: document.getElementById("wfhShareStatus"),
     wfhPeopleGrid: document.getElementById("wfhPeopleGrid"),
+    memberMonthDialog: document.getElementById("memberMonthDialog"),
+    memberMonthTitle: document.getElementById("memberMonthTitle"),
+    memberMonthSub: document.getElementById("memberMonthSub"),
+    memberMonth: document.getElementById("memberMonth"),
+    memberPrevMonth: document.getElementById("memberPrevMonth"),
+    memberNextMonth: document.getElementById("memberNextMonth"),
+    memberLeaveHeading: document.getElementById("memberLeaveHeading"),
+    memberWfhHeading: document.getElementById("memberWfhHeading"),
+    memberMissedHeading: document.getElementById("memberMissedHeading"),
+    memberLeaveList: document.getElementById("memberLeaveList"),
+    memberWfhList: document.getElementById("memberWfhList"),
+    memberMissedList: document.getElementById("memberMissedList"),
+    memberMonthClose: document.getElementById("memberMonthClose"),
   };
 
   function getIndiaParts() {
@@ -431,6 +445,10 @@
         });
         renderBoards();
         applyIdentityLock();
+        if (isAdmin) {
+          renderAdminRoster();
+          renderMemberMonthDialog();
+        }
       });
 
       claimsDayRef.on("value", (snap) => {
@@ -704,6 +722,197 @@
     return getWfhRecords(departmentId, memberName).find((row) => row.date === date) || null;
   }
 
+  function currentMonthYm() {
+    return todayISO().slice(0, 7);
+  }
+
+  function shiftMonthYm(ym, delta) {
+    const m = String(ym || "").match(/^(\d{4})-(\d{2})$/);
+    const base = m ? `${m[1]}-${m[2]}` : currentMonthYm();
+    const parts = base.split("-").map(Number);
+    const next = new Date(parts[0], parts[1] - 1 + Number(delta || 0), 1);
+    return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+  }
+
+  function isLeaveUpdate(entry) {
+    if (!entry) return false;
+    if (entry.onLeave) return true;
+    const tasks = Array.isArray(entry.tasks) ? entry.tasks : [];
+    return tasks.some((t) => String(t).trim().toLowerCase() === "leave");
+  }
+
+  function getLeaveDates(departmentId, memberName) {
+    const dates = new Set();
+    loadUpdates().forEach((entry) => {
+      if (entry.departmentId !== departmentId || !entry.date) return;
+      if (!sameName(entry.memberName, memberName)) return;
+      if (isLeaveUpdate(entry)) dates.add(entry.date);
+    });
+    return [...dates].sort();
+  }
+
+  function datesInMonth(dates, ym) {
+    return (dates || []).filter((date) => String(date).startsWith(ym));
+  }
+
+  function lastDayOfMonth(ym) {
+    const m = String(ym || "").match(/^(\d{4})-(\d{2})$/);
+    if (!m) return "";
+    const last = new Date(Number(m[1]), Number(m[2]), 0).getDate();
+    return `${m[1]}-${m[2]}-${String(last).padStart(2, "0")}`;
+  }
+
+  function monthReviewEnd(ym) {
+    const currentYm = currentMonthYm();
+    if (!ym || ym > currentYm) return "";
+    if (ym < currentYm) return lastDayOfMonth(ym);
+    const yesterday = addDaysISO(todayISO(), -1);
+    return yesterday >= `${ym}-01` ? yesterday : "";
+  }
+
+  function reviewDaysInMonth(ym) {
+    const end = monthReviewEnd(ym);
+    if (!end) return [];
+    const days = [];
+    let cursor = `${ym}-01`;
+    while (cursor <= end) {
+      const parts = cursor.split("-").map(Number);
+      const weekday = new Date(parts[0], parts[1] - 1, parts[2]).getDay();
+      if (weekday !== 0 && weekday !== 6) days.push(cursor);
+      cursor = addDaysISO(cursor, 1);
+    }
+    return days;
+  }
+
+  function getSubmittedDates(departmentId, memberName, ym) {
+    const dates = new Set();
+    loadUpdates().forEach((entry) => {
+      if (entry.departmentId !== departmentId || !entry.date) return;
+      if (!sameName(entry.memberName, memberName)) return;
+      if (String(entry.date).startsWith(ym)) dates.add(entry.date);
+    });
+    return dates;
+  }
+
+  function adminRowMeta(departmentId, memberName, timeText) {
+    const timeHtml = timeText
+      ? `<span class="update-time">${escapeHtml(timeText)}</span>`
+      : "";
+    if (!isAdmin) return timeHtml;
+    const stats = getMonthAttendance(departmentId, memberName, currentMonthYm());
+    return `<span class="update-meta"><button type="button" class="name-month-stats" data-action="view-member" data-dept="${escapeHtml(departmentId)}" data-name="${escapeHtml(memberName)}">Leave ${stats.leaveCount} · WFH ${stats.wfhCount}</button>${timeHtml}</span>`;
+  }
+
+  function adminMissedLine(departmentId, memberName) {
+    if (!isAdmin) return "";
+    const stats = getMonthAttendance(departmentId, memberName, currentMonthYm());
+    return `<button type="button" class="status-missed-line" data-action="view-member" data-dept="${escapeHtml(departmentId)}" data-name="${escapeHtml(memberName)}">Status not updated ${stats.missedCount}</button>`;
+  }
+
+  function getMonthAttendance(departmentId, memberName, ym) {
+    const leaveDates = datesInMonth(getLeaveDates(departmentId, memberName), ym);
+    const wfhRows = getWfhRecords(departmentId, memberName).filter((row) =>
+      String(row.date || "").startsWith(ym)
+    );
+    const submitted = getSubmittedDates(departmentId, memberName, ym);
+    const leaveSet = new Set(leaveDates);
+    const missedDates = reviewDaysInMonth(ym).filter(
+      (date) => !submitted.has(date) && !leaveSet.has(date)
+    );
+    return {
+      leaveDates,
+      wfhRows,
+      missedDates,
+      leaveCount: leaveDates.length,
+      wfhCount: wfhRows.length,
+      missedCount: missedDates.length,
+    };
+  }
+
+  function fillMonthList(listEl, items, emptyText) {
+    if (!listEl) return;
+    listEl.innerHTML = "";
+    if (!items.length) {
+      const li = document.createElement("li");
+      li.className = "empty-state";
+      li.textContent = emptyText;
+      listEl.appendChild(li);
+      return;
+    }
+    items.forEach((text) => {
+      const li = document.createElement("li");
+      li.textContent = text;
+      listEl.appendChild(li);
+    });
+  }
+
+  function renderMemberMonthDialog() {
+    if (!els.memberMonthDialog || !memberDetail) return;
+    const dept = findDept(memberDetail.departmentId);
+    if (!dept) return;
+    const ym = (els.memberMonth && els.memberMonth.value) || currentMonthYm();
+    if (els.memberMonth) els.memberMonth.value = ym;
+    if (els.memberNextMonth) els.memberNextMonth.disabled = ym >= currentMonthYm();
+    const stats = getMonthAttendance(dept.id, memberDetail.memberName, ym);
+    if (els.memberMonthTitle) {
+      els.memberMonthTitle.textContent = memberDetail.memberName;
+    }
+    if (els.memberMonthSub) {
+      els.memberMonthSub.textContent = `${dept.name} · ${formatMonthLabel(ym)} · from the 1st through yesterday. Weekdays without a status count as not updated. Leave days are not counted.`;
+    }
+    if (els.memberLeaveHeading) {
+      els.memberLeaveHeading.textContent = `Leaves Taken — ${stats.leaveCount}`;
+    }
+    if (els.memberWfhHeading) {
+      els.memberWfhHeading.textContent = `WFH Taken — ${stats.wfhCount}`;
+    }
+    if (els.memberMissedHeading) {
+      els.memberMissedHeading.textContent = `Status not updated — ${stats.missedCount}`;
+    }
+    fillMonthList(
+      els.memberLeaveList,
+      stats.leaveDates.map((date) => formatShareDate(date)),
+      "No leaves this month."
+    );
+    fillMonthList(
+      els.memberWfhList,
+      stats.wfhRows.map((row) =>
+        row.note ? `${formatShareDate(row.date)} — ${row.note}` : formatShareDate(row.date)
+      ),
+      "No WFH this month."
+    );
+    fillMonthList(
+      els.memberMissedList,
+      stats.missedDates.map((date) => formatShareDate(date)),
+      "No missed status days this month."
+    );
+  }
+
+  function openMemberMonth(departmentId, memberName) {
+    const dept = findDept(departmentId);
+    if (!dept || !memberName) return;
+    memberDetail = { departmentId, memberName };
+    if (els.memberMonth) els.memberMonth.value = currentMonthYm();
+    renderMemberMonthDialog();
+    if (els.memberMonthDialog) {
+      if (typeof els.memberMonthDialog.showModal === "function") {
+        if (!els.memberMonthDialog.open) els.memberMonthDialog.showModal();
+      } else {
+        els.memberMonthDialog.setAttribute("open", "");
+      }
+    }
+  }
+
+  function closeMemberMonth() {
+    memberDetail = null;
+    if (!els.memberMonthDialog) return;
+    if (typeof els.memberMonthDialog.close === "function") {
+      if (els.memberMonthDialog.open) els.memberMonthDialog.close();
+    } else {
+      els.memberMonthDialog.removeAttribute("open");
+    }
+  }
+
   function attachWfhListener() {
     if (!db || !isAdmin || wfhListening) return;
     wfhRef = db.ref("dayline/wfh");
@@ -712,6 +921,9 @@
       (snap) => {
         wfhCache = snap.val() || {};
         renderWfhGrid();
+        renderAdminRoster();
+        renderBoards();
+        renderMemberMonthDialog();
       },
       (err) => {
         console.error(err);
@@ -1316,7 +1528,7 @@
         if (person) {
           updatedCount += 1;
           taskCount += person.tasks.length;
-        } else if (showMissing) {
+        } else {
           missingCount += 1;
         }
       });
@@ -1329,11 +1541,9 @@
       }
     });
 
-    const missingLabel =
-      showMissing && missingCount > 0 ? ` · ${missingCount} no status` : "";
     const dayLabel = date === todayISO() ? "today" : date === addDaysISO(todayISO(), -1) ? "yesterday" : formatShareDate(date);
     els.boardMeta.textContent =
-      `${updatedCount} updated${missingLabel} · ${taskCount} task${taskCount === 1 ? "" : "s"} · ${dayLabel} (${date})`;
+      `${updatedCount} updated · ${missingCount} not updated · ${taskCount} task${taskCount === 1 ? "" : "s"} · ${dayLabel} (${date})`;
     if (document.getElementById("board-title")) {
       document.getElementById("board-title").textContent = `Department boards — ${dayLabel}`;
     }
@@ -1347,17 +1557,17 @@
         : [];
       const names = [...expected, ...extras];
       const updatedInDept = names.filter((name) => personOnDay(members, name)).length;
-      const missingInDept = showMissing ? names.length - updatedInDept : 0;
+      const missingInDept = names.length - updatedInDept;
 
       const panel = document.createElement("article");
       panel.className = "dept-panel";
       panel.style.setProperty("--dept-accent", dept.accent);
       panel.style.animationDelay = `${index * 0.04}s`;
 
-      const countBits = [`${updatedInDept} update${updatedInDept === 1 ? "" : "s"}`];
-      if (missingInDept > 0) {
-        countBits.push(`${missingInDept} no status`);
-      }
+      const countBits = [
+        `${updatedInDept} update${updatedInDept === 1 ? "" : "s"}`,
+        `<span class="missing-count">${missingInDept} not updated</span>`,
+      ];
       const head = document.createElement("div");
       head.className = "dept-panel-head";
       head.innerHTML = `
@@ -1391,7 +1601,9 @@
           block.innerHTML = `
             <div class="person-head">
               <span class="update-name">${escapeHtml(name)}</span>
+              ${adminRowMeta(dept.id, name)}
             </div>
+            ${adminMissedLine(dept.id, name)}
             <p class="missing-mark" role="status">NO STATUS UPDATED</p>
           `;
           wrap.appendChild(block);
@@ -1416,8 +1628,9 @@
             <span class="update-name">${escapeHtml(person.memberName)}${
               person.onLeave ? ' <span class="leave-badge">Leave</span>' : ""
             }</span>
-            <span class="update-time">${escapeHtml(formatTime(person.lastAt))}</span>
+            ${adminRowMeta(dept.id, person.memberName, formatTime(person.lastAt))}
           </div>
+          ${adminMissedLine(dept.id, person.memberName)}
           ${bodyHtml}
         `;
         wrap.appendChild(block);
@@ -1519,7 +1732,9 @@
       }
     } else {
       detachWfhListener();
+      closeMemberMonth();
     }
+    renderBoards();
   }
 
   function requireAdmin() {
@@ -1595,6 +1810,14 @@
   }
 
   els.viewDate.addEventListener("change", renderBoards);
+
+  if (els.boards) {
+    els.boards.addEventListener("click", (event) => {
+      const btn = event.target.closest("button[data-action='view-member']");
+      if (!btn || !isAdmin) return;
+      openMemberMonth(btn.getAttribute("data-dept"), btn.getAttribute("data-name"));
+    });
+  }
 
   if (els.prevDayBtn) {
     els.prevDayBtn.addEventListener("click", () => {
@@ -2016,12 +2239,45 @@
     }
   });
 
+  if (els.memberMonth) {
+    els.memberMonth.addEventListener("change", renderMemberMonthDialog);
+  }
+  if (els.memberPrevMonth) {
+    els.memberPrevMonth.addEventListener("click", () => {
+      if (!els.memberMonth) return;
+      els.memberMonth.value = shiftMonthYm(els.memberMonth.value || currentMonthYm(), -1);
+      renderMemberMonthDialog();
+    });
+  }
+  if (els.memberNextMonth) {
+    els.memberNextMonth.addEventListener("click", () => {
+      if (!els.memberMonth) return;
+      const next = shiftMonthYm(els.memberMonth.value || currentMonthYm(), 1);
+      if (next > currentMonthYm()) return;
+      els.memberMonth.value = next;
+      renderMemberMonthDialog();
+    });
+  }
+  if (els.memberMonthClose) {
+    els.memberMonthClose.addEventListener("click", closeMemberMonth);
+  }
+  if (els.memberMonthDialog) {
+    els.memberMonthDialog.addEventListener("close", () => {
+      memberDetail = null;
+    });
+  }
+
   els.adminRoster.addEventListener("click", async (event) => {
     const btn = event.target.closest("button[data-action]");
     if (!btn || !requireAdmin()) return;
-    if (!requireCloudForShare()) return;
 
     const action = btn.getAttribute("data-action");
+    if (action === "view-member") {
+      openMemberMonth(btn.getAttribute("data-dept"), btn.getAttribute("data-name"));
+      return;
+    }
+
+    if (!requireCloudForShare()) return;
     const deptId = btn.getAttribute("data-dept");
     const dept = findDept(deptId);
     if (!dept) return;

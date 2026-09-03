@@ -468,6 +468,10 @@ body {
   color: var(--ink-soft);
 }
 
+.missing-count {
+  color: var(--danger);
+}
+
 .dept-people {
   padding: 0.25rem 0;
 }
@@ -544,9 +548,56 @@ body {
   font-size: 0.95rem;
 }
 
+.update-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  margin-left: auto;
+}
+
+.name-month-stats {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.name-month-stats:hover,
+.name-month-stats:focus-visible {
+  color: var(--accent);
+}
+
 .update-time {
   font-size: 0.72rem;
   color: var(--ink-soft);
+}
+
+.status-missed-line {
+  appearance: none;
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0.1rem 0 0.4rem;
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--danger);
+  text-align: right;
+  cursor: pointer;
+}
+
+.status-missed-line:hover,
+.status-missed-line:focus-visible {
+  text-decoration: underline;
 }
 
 .task-list {
@@ -708,6 +759,92 @@ body {
 }
 
 .admin-member-list li:last-child {
+  border-bottom: none;
+}
+
+.admin-member-open {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 0.6rem;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.admin-member-open:hover .admin-member-name,
+.admin-member-open:focus-visible .admin-member-name {
+  color: var(--accent);
+}
+
+.admin-member-name {
+  font-weight: 700;
+}
+
+.admin-member-inline {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent-deep);
+  white-space: nowrap;
+}
+
+.admin-member-last {
+  font-weight: 500;
+  color: var(--ink-soft);
+}
+
+.member-month-dialog {
+  max-width: 860px;
+}
+
+.member-month {
+  display: grid;
+  gap: 0.9rem;
+  padding: 1.25rem;
+}
+
+.member-month h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+}
+
+.member-month-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.85rem;
+}
+
+.member-month-cols h3 {
+  margin: 0 0 0.45rem;
+  font-size: 0.92rem;
+}
+
+.member-month-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.75);
+  min-height: 4.5rem;
+}
+
+.member-month-list li {
+  padding: 0.4rem 0.2rem;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.86rem;
+}
+
+.member-month-list li:last-child {
   border-bottom: none;
 }
 

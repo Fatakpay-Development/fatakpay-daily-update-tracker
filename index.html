@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=20260903-missing3" />
+  <link rel="stylesheet" href="styles.css?v=20260903-monthstats9" />
 </head>
 <body>
   <div class="atmosphere" aria-hidden="true"></div>
@@ -98,7 +98,7 @@
         <div>
           <h2 id="board-title">Department boards</h2>
           <p id="boardMeta" class="board-meta"></p>
-          <p class="field-note">Today shows only people who have submitted. From yesterday and older dates, missing people appear in red as NO STATUS UPDATED. That rolls forward each day. Red names are on-screen only — not copied to WhatsApp or Excel.</p>
+          <p class="field-note">Each department shows how many people have updated and how many have not. Today lists only submitted updates. From yesterday and older dates, missing people also appear in red as NO STATUS UPDATED. Red names are on-screen only — not copied to WhatsApp or Excel.</p>
         </div>
         <div class="board-actions">
           <button type="button" id="copyWhatsAppBtn" class="btn-ghost">Copy for WhatsApp</button>
@@ -113,7 +113,7 @@
       <div class="admin-panel-head">
         <div>
           <h2>Admin — manage team</h2>
-          <p class="board-meta">Add or remove departments and names. Track WFH days. Download a date-range Excel report. Regular users can only submit updates.</p>
+          <p class="board-meta">Add or remove departments and names. See this month’s leave and WFH counts on each person. Download a date-range Excel report. Regular users can only submit updates.</p>
         </div>
         <button type="button" id="adminLogoutBtn" class="btn-ghost">Log out</button>
       </div>
@@ -178,6 +178,8 @@
         </form>
       </div>
 
+      <div id="adminRoster" class="admin-roster"></div>
+
       <section id="wfhTracker" class="wfh-tracker" aria-labelledby="wfh-title">
         <div class="wfh-head">
           <div>
@@ -211,8 +213,6 @@
         <p id="wfhShareStatus" class="form-status" role="status"></p>
         <div id="wfhPeopleGrid" class="wfh-people-grid"></div>
       </section>
-
-      <div id="adminRoster" class="admin-roster"></div>
     </div>
   </section>
 
@@ -223,6 +223,38 @@
       <button type="button" id="clearDayBtn" class="btn-ghost danger">Clear selected day</button>
     </div>
   </footer>
+
+  <dialog id="memberMonthDialog" class="admin-dialog member-month-dialog">
+    <div class="member-month">
+      <h2 id="memberMonthTitle">Member month</h2>
+      <p id="memberMonthSub" class="field-note"></p>
+      <div class="wfh-month-nav">
+        <button type="button" id="memberPrevMonth" class="btn-ghost btn-sm" aria-label="Previous month">‹</button>
+        <label class="date-picker">
+          <span>Month</span>
+          <input type="month" id="memberMonth" />
+        </label>
+        <button type="button" id="memberNextMonth" class="btn-ghost btn-sm" aria-label="Next month">›</button>
+      </div>
+      <div class="member-month-cols">
+        <section>
+          <h3 id="memberLeaveHeading">Leaves</h3>
+          <ul id="memberLeaveList" class="member-month-list"></ul>
+        </section>
+        <section>
+          <h3 id="memberWfhHeading">WFH</h3>
+          <ul id="memberWfhList" class="member-month-list"></ul>
+        </section>
+        <section>
+          <h3 id="memberMissedHeading">Status not updated</h3>
+          <ul id="memberMissedList" class="member-month-list"></ul>
+        </section>
+      </div>
+      <div class="dialog-actions">
+        <button type="button" id="memberMonthClose" class="btn-primary">Close</button>
+      </div>
+    </div>
+  </dialog>
 
   <dialog id="adminLoginDialog" class="admin-dialog">
     <form id="adminLoginForm" method="dialog" class="admin-login">
@@ -244,8 +276,8 @@
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-database-compat.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
-  <script src="firebase-config.js?v=20260903-missing3"></script>
-  <script src="data.js?v=20260903-missing3"></script>
-  <script src="app.js?v=20260903-missing3"></script>
+  <script src="firebase-config.js?v=20260903-monthstats9"></script>
+  <script src="data.js?v=20260903-monthstats9"></script>
+  <script src="app.js?v=20260903-monthstats9"></script>
 </body>
 </html>
