@@ -370,7 +370,7 @@
         const val = snap.val();
         if (!val || !Array.isArray(val.departments) || val.departments.length === 0) {
           team = cloneDefaults();
-          teamRef.set(team).catch(() => {});
+          saveTeam().catch(() => {});
         } else {
           team = normalizeTeam(val);
         }
@@ -436,10 +436,27 @@
     await updatesRef.child(entry.id).set(entry);
   }
 
+  function rosterIndexes(departments) {
+    const allowedMembers = {};
+    const allowedDepartments = {};
+    (departments || []).forEach((dept) => {
+      if (!dept || !dept.id) return;
+      allowedDepartments[dept.id] = true;
+      (dept.members || []).forEach((name) => {
+        const memberName = String(name || "").trim();
+        if (!memberName) return;
+        allowedMembers[memberName] = { departmentId: dept.id, memberName };
+      });
+    });
+    return { allowedMembers, allowedDepartments };
+  }
+
   async function saveTeam() {
-    if (cloudEnabled && teamRef) {
-      await teamRef.set({ departments: team.departments });
-    }
+    if (!cloudEnabled || !teamRef || !db) return;
+    const { allowedMembers, allowedDepartments } = rosterIndexes(team.departments);
+    await teamRef.set({ departments: team.departments });
+    await db.ref("dayline/allowedMembers").set(allowedMembers);
+    await db.ref("dayline/allowedDepartments").set(allowedDepartments);
   }
 
   async function saveSettings() {
