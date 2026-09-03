@@ -1,0 +1,33 @@
+{
+  "rules": {
+    "dayline": {
+      "updates": {
+        ".read": true,
+        ".write": "auth != null && auth.token.email == 'dayline-admin@fatakpay.com'",
+        "$id": {
+          ".write": true,
+          ".validate": "newData.exists() && newData.hasChildren(['id', 'departmentId', 'memberName', 'date'])"
+        }
+      },
+      "claims": {
+        ".read": true,
+        "$date": {
+          ".write": "auth != null && auth.token.email == 'dayline-admin@fatakpay.com'",
+          "$dept": {
+            "$member": {
+              ".write": true
+            }
+          }
+        }
+      },
+      "team": {
+        ".read": true,
+        ".write": "auth != null && auth.token.email == 'dayline-admin@fatakpay.com'"
+      },
+      "settings": {
+        ".read": true,
+        ".write": "auth != null && auth.token.email == 'dayline-admin@fatakpay.com'"
+      }
+    }
+  }
+}

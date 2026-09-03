@@ -1,6 +1,5 @@
 (function () {
-  const ADMIN_SESSION_KEY = "dayline_admin_session";
-  const ADMIN_PASS_DIGEST = "6c7a38b595d8a722021e0ec1f87f768250881def20e9c8362c0c64027ab18e0c";
+  const ADMIN_EMAIL = "dayline-admin@fatakpay.com";
   const CLAIM_KEY = "dayline_identity_claim_v2";
   const DEFAULT_ACCENTS = ["#2b5aa0", "#0d7a6f", "#c45c26", "#6b4c9a", "#8a5a2b", "#b45309", "#0f766e", "#7c3aed"];
   const TZ = "Asia/Kolkata";
@@ -14,6 +13,7 @@
   );
 
   let db = null;
+  let auth = null;
   let updatesRef = null;
   let teamRef = null;
   let settingsRef = null;
@@ -22,7 +22,7 @@
   let claimsCache = {}; // { [deptId]: { [safeMember]: { token, memberName, ... } } }
   let team = cloneDefaults();
   let settings = { cutoffEnabled: false, cutoffTime: "19:00" };
-  let isAdmin = sessionStorage.getItem(ADMIN_SESSION_KEY) === ADMIN_PASS_DIGEST;
+  let isAdmin = false;
   let submitInFlight = false;
 
   const els = {
@@ -330,6 +330,12 @@
 
     try {
       firebase.initializeApp(firebaseConfig);
+      auth = firebase.auth();
+      auth.setPersistence(firebase.auth.Auth.Persistence.SESSION);
+      auth.onAuthStateChanged((user) => {
+        isAdmin = Boolean(user && user.email === ADMIN_EMAIL);
+        setAdminUi({ scroll: false });
+      });
       db = firebase.database();
       updatesRef = db.ref("dayline/updates");
       teamRef = db.ref("dayline/team");
@@ -410,7 +416,14 @@
 
   /** One entry per person per day — replace existing tasks for that person. */
   async function upsertPersonDay(entry) {
-    const remaining = loadUpdates().filter(
+    const existing = loadUpdates().find(
+      (u) =>
+        u.date === entry.date &&
+        u.departmentId === entry.departmentId &&
+        u.memberName === entry.memberName
+    );
+    if (existing) entry.id = existing.id;
+    updatesCache = loadUpdates().filter(
       (u) =>
         !(
           u.date === entry.date &&
@@ -418,8 +431,9 @@
           u.memberName === entry.memberName
         )
     );
-    remaining.push(entry);
-    await persistUpdates(remaining);
+    updatesCache.push(entry);
+    if (!cloudEnabled || !updatesRef) return;
+    await updatesRef.child(entry.id).set(entry);
   }
 
   async function saveTeam() {
@@ -1057,8 +1071,11 @@
   }
 
   function requireAdmin() {
-    if (!isAdmin) {
+    const signedIn = Boolean(auth && auth.currentUser && auth.currentUser.email === ADMIN_EMAIL);
+    isAdmin = signedIn;
+    if (!signedIn) {
       alert("Admin login required.");
+      setAdminUi({ scroll: false });
       return false;
     }
     return true;
@@ -1280,41 +1297,37 @@
     els.adminLoginDialog.close();
   });
 
-  async function digestText(text) {
-    const bytes = new TextEncoder().encode(text);
-    const buf = await crypto.subtle.digest("SHA-256", bytes);
-    return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
-  }
-
   els.adminLoginForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const entered = els.adminPassword.value;
     els.adminLoginError.textContent = "";
+    if (!auth) {
+      els.adminLoginError.textContent = "Admin login is not available.";
+      return;
+    }
     const submitBtn = els.adminLoginForm.querySelector('button[type="submit"]');
     if (submitBtn) submitBtn.disabled = true;
     try {
-      const digest = await digestText(entered);
-      if (digest !== ADMIN_PASS_DIGEST) {
-        els.adminLoginError.textContent = "Incorrect password.";
-        return;
-      }
-      isAdmin = true;
-      sessionStorage.setItem(ADMIN_SESSION_KEY, digest);
+      await auth.signInWithEmailAndPassword(ADMIN_EMAIL, entered);
       els.adminPassword.value = "";
       els.adminLoginDialog.close();
       setAdminUi();
       setFormStatus("Admin unlocked. You can manage the team, cutoff time, and submit for anyone.");
     } catch (err) {
       console.error(err);
-      els.adminLoginError.textContent = "Could not verify password.";
+      els.adminLoginError.textContent = "Incorrect password.";
     } finally {
       if (submitBtn) submitBtn.disabled = false;
     }
   });
 
-  els.adminLogoutBtn.addEventListener("click", () => {
+  els.adminLogoutBtn.addEventListener("click", async () => {
+    try {
+      if (auth) await auth.signOut();
+    } catch (err) {
+      console.error(err);
+    }
     isAdmin = false;
-    sessionStorage.removeItem(ADMIN_SESSION_KEY);
     setAdminUi({ scroll: false });
     setFormStatus("Admin logged out.");
   });

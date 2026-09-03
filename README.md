@@ -26,7 +26,7 @@ Until Firebase is configured, the site shows a warning and will not accept share
 2. Select **Department** → **Your name**
 3. Write tasks **one per line** → **Submit update**
 4. Use **Copy for WhatsApp** to paste the day’s summary into the group
-5. **Admin** (top-right) can add/remove departments and names after entering the admin password
+5. **Admin** (top-right) — enter the admin password only. It is checked on the server, not stored in the page.
 
 ## Local preview
 
